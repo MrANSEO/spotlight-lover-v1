@@ -1,0 +1,298 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  CANDIDATE
+  ADMIN
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  MESOMB
+  STRIPE
+  MTN
+  ORANGE
+}
+
+enum CandidateStatus {
+  PENDING_PAYMENT
+  PENDING_VALIDATION
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String?
+  lastName  String?
+  phone     String?
+  role      UserRole @default(USER)
+  
+  // 2FA
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  
+  // Session management
+  refreshToken String?
+  lastLogin    DateTime?
+  
+  // Security
+  isActive     Boolean @default(true)
+  isVerified   Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  candidate           Candidate?
+  votesGiven          Vote[]                           @relation("VoterVotes")
+  auditLogs           AuditLog[]
+  transactions        Transaction[]
+  candidatePayment    CandidateRegistrationPayment?
+  
+  @@index([email])
+  @@index([role])
+}
+
+model Candidate {
+  id              String          @id @default(uuid())
+  userId          String          @unique
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Candidate info
+  stageName       String
+  bio             String?
+  videoUrl        String?
+  thumbnailUrl    String?
+  videoPublicId   String?
+  
+  status          CandidateStatus @default(PENDING_PAYMENT)
+  
+  // Moderation
+  rejectionReason String?
+  moderatedAt     DateTime?
+  moderatedBy     String?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relations
+  votesReceived                Vote[]
+  registrationPayment          CandidateRegistrationPayment?
+  leaderboardEntries           LeaderboardEntry[]
+  
+  @@index([userId])
+  @@index([status])
+}
+
+model CandidateRegistrationPayment {
+  id                String        @id @default(uuid())
+  candidateId       String        @unique
+  candidate         Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  userId            String        @unique
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  amount            Int           @default(500) // FCFA
+  currency          String        @default("XOF")
+  status            PaymentStatus @default(PENDING)
+  provider          PaymentProvider
+  
+  // Provider specific
+  transactionId     String?       @unique
+  providerReference String?
+  
+  // Payment metadata
+  ipAddress         String?
+  userAgent         String?
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  @@index([candidateId])
+  @@index([userId])
+  @@index([status])
+  @@index([transactionId])
+}
+
+model Vote {
+  id          String        @id @default(uuid())
+  candidateId String
+  candidate   Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  voterId     String
+  voter       User          @relation("VoterVotes", fields: [voterId], references: [id], onDelete: Cascade)
+  
+  amount      Int           @default(100) // FCFA per vote
+  currency    String        @default("XOF")
+  status      PaymentStatus @default(PENDING)
+  provider    PaymentProvider
+  
+  // Transaction reference
+  transactionId String?     @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  
+  // Security & fraud detection
+  ipAddress     String?
+  userAgent     String?
+  isSuspicious  Boolean      @default(false)
+  isVerified    Boolean      @default(false)
+  
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  @@index([candidateId])
+  @@index([voterId])
+  @@index([status])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
+model Transaction {
+  id                String          @id @default(uuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type              String          // VOTE, REGISTRATION
+  amount            Int
+  currency          String          @default("XOF")
+  status            PaymentStatus
+  provider          PaymentProvider
+  
+  // Provider details
+  providerReference String?         @unique
+  providerResponse  Json?
+  webhookReceived   Boolean         @default(false)
+  webhookData       Json?
+  
+  // Idempotency
+  idempotencyKey    String?         @unique
+  
+  // Security
+  ipAddress         String?
+  userAgent         String?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  votes             Vote[]
+  
+  @@index([userId])
+  @@index([status])
+  @@index([providerReference])
+  @@index([idempotencyKey])
+  @@index([createdAt])
+}
+
+model LeaderboardEntry {
+  id          String    @id @default(uuid())
+  candidateId String    @unique
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  totalVotes  Int       @default(0)
+  totalAmount Int       @default(0) // FCFA
+  rank        Int?
+  
+  lastUpdated DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  
+  @@index([rank])
+  @@index([totalVotes])
+  @@index([lastUpdated])
+}
+
+model SystemSetting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([key])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  action    String
+  resource  String
+  details   Json?
+  
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model DailyStats {
+  id              String   @id @default(uuid())
+  date            DateTime @unique @db.Date
+  
+  newUsers        Int      @default(0)
+  newCandidates   Int      @default(0)
+  totalVotes      Int      @default(0)
+  totalRevenue    Int      @default(0) // FCFA
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([date])
+}
+
+model WebhookLog {
+  id              String   @id @default(uuid())
+  provider        String
+  event           String
+  payload         Json
+  signature       String?
+  
+  isValid         Boolean  @default(false)
+  isProcessed     Boolean  @default(false)
+  processingError String?
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([provider])
+  @@index([isProcessed])
+  @@index([createdAt])
+}
+
+model IpBlacklist {
+  id          String   @id @default(uuid())
+  ipAddress   String   @unique
+  reason      String
+  isPermanent Boolean  @default(false)
+  expiresAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([ipAddress])
+  @@index([expiresAt])
+}
