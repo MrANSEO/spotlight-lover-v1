@@ -14,11 +14,11 @@ export class PaymentsService {
     private mesombProvider: MeSombProvider,
     private stripeProvider: StripeProvider,
   ) {
-    this.providers = new Map([
-      [PaymentProvider.MESOMB, this.mesombProvider],
-      [PaymentProvider.STRIPE, this.stripeProvider],
-      [PaymentProvider.MTN, this.mesombProvider], // MTN uses MeSomb
-      [PaymentProvider.ORANGE, this.mesombProvider], // Orange uses MeSomb
+    this.providers = new Map<PaymentProvider, IPaymentProvider>([
+      [PaymentProvider.MESOMB, this.mesombProvider as IPaymentProvider],
+      [PaymentProvider.STRIPE, this.stripeProvider as IPaymentProvider],
+      [PaymentProvider.MTN, this.mesombProvider as IPaymentProvider],
+      [PaymentProvider.ORANGE, this.mesombProvider as IPaymentProvider],
     ]);
   }
 
