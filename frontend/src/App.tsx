@@ -7,16 +7,23 @@ import PrivateLayout from './components/common/PrivateLayout';
 
 // Public pages
 import HomePage from './pages/public/HomePage';
+import AboutPage from './pages/public/AboutPage';
+import GalleryPage from './pages/public/GalleryPage';
+import BecomeCandidatePage from './pages/public/BecomeCandidatePage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
 
 // User pages
 import FeedPage from './pages/user/FeedPage';
+import VideoFeedPage from './pages/user/VideoFeedPage';
 import LeaderboardPage from './pages/user/LeaderboardPage';
 import ProfilePage from './pages/user/ProfilePage';
 
 // Admin pages
 import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
+import AdminCandidatesPage from './pages/admin/AdminCandidatesPage';
+import AdminWebhooksPage from './pages/admin/AdminWebhooksPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) => {
@@ -47,6 +54,9 @@ function App() {
           {/* Public routes */}
           <Route element={<PublicLayout />}>
             <Route path="/" element={<HomePage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="/gallery" element={<GalleryPage />} />
+            <Route path="/become-candidate" element={<BecomeCandidatePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
           </Route>
@@ -58,6 +68,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <FeedPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/video-feed"
+              element={
+                <ProtectedRoute>
+                  <VideoFeedPage />
                 </ProtectedRoute>
               }
             />
@@ -84,6 +102,30 @@ function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminUsersPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/candidates"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminCandidatesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/webhooks"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminWebhooksPage />
                 </ProtectedRoute>
               }
             />

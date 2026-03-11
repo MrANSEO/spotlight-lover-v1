@@ -7,63 +7,109 @@ export default function PrivateLayout() {
 
   const handleLogout = () => {
     logout();
-    navigate('/');
+    navigate('/login');
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm">
+        <nav className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
             <Link to="/feed" className="text-2xl font-bold text-purple-600">
-              Spotlight Lover
+              🎬 Spotlight Lover
             </Link>
-            <div className="flex items-center space-x-4">
-              <Link to="/feed" className="text-gray-700 hover:text-purple-600">
-                Feed
+            
+            <div className="hidden md:flex items-center space-x-6">
+              <Link to="/feed" className="text-gray-700 hover:text-purple-600 font-medium">
+                📱 Feed
               </Link>
-              <Link to="/leaderboard" className="text-gray-700 hover:text-purple-600">
-                Leaderboard
+              <Link to="/video-feed" className="text-gray-700 hover:text-purple-600 font-medium">
+                🎥 Vidéos
               </Link>
-              <Link to="/profile" className="text-gray-700 hover:text-purple-600">
-                Profile
+              <Link to="/leaderboard" className="text-gray-700 hover:text-purple-600 font-medium">
+                🏆 Classement
               </Link>
+              <Link to="/profile" className="text-gray-700 hover:text-purple-600 font-medium">
+                👤 Profil
+              </Link>
+              
               {user?.role === 'ADMIN' && (
-                <Link to="/admin" className="text-gray-700 hover:text-purple-600">
-                  Admin
-                </Link>
+                <div className="relative group">
+                  <button className="text-gray-700 hover:text-purple-600 font-medium">
+                    🛡️ Admin
+                  </button>
+                  <div className="absolute hidden group-hover:block bg-white shadow-lg rounded-lg mt-2 py-2 w-48 z-10">
+                    <Link 
+                      to="/admin" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      📊 Dashboard
+                    </Link>
+                    <Link 
+                      to="/admin/users" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      👥 Utilisateurs
+                    </Link>
+                    <Link 
+                      to="/admin/candidates" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      🎬 Candidats
+                    </Link>
+                    <Link 
+                      to="/admin/webhooks" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      🔔 Webhooks
+                    </Link>
+                  </div>
+                </div>
               )}
-              <button
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-600">
+                {user?.email}
+              </span>
+              <button 
                 onClick={handleLogout}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
               >
-                Logout
+                Déconnexion
               </button>
             </div>
           </div>
-        </div>
-      </nav>
-      <main>
+        </nav>
+      </header>
+
+      {/* Main content */}
+      <main className="pb-16">
         <Outlet />
       </main>
-      
-      {/* Mobile Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg md:hidden">
-        <div className="flex justify-around py-3">
-          <Link to="/feed" className="text-center">
-            <div className="text-2xl">🏠</div>
-            <div className="text-xs">Feed</div>
+
+      {/* Mobile bottom navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 md:hidden z-40">
+        <div className="flex justify-around py-2">
+          <Link to="/feed" className="flex flex-col items-center py-2 px-3 text-gray-600 hover:text-purple-600">
+            <span className="text-2xl">📱</span>
+            <span className="text-xs mt-1">Feed</span>
           </Link>
-          <Link to="/leaderboard" className="text-center">
-            <div className="text-2xl">🏆</div>
-            <div className="text-xs">Leaderboard</div>
+          <Link to="/video-feed" className="flex flex-col items-center py-2 px-3 text-gray-600 hover:text-purple-600">
+            <span className="text-2xl">🎥</span>
+            <span className="text-xs mt-1">Vidéos</span>
           </Link>
-          <Link to="/profile" className="text-center">
-            <div className="text-2xl">👤</div>
-            <div className="text-xs">Profile</div>
+          <Link to="/leaderboard" className="flex flex-col items-center py-2 px-3 text-gray-600 hover:text-purple-600">
+            <span className="text-2xl">🏆</span>
+            <span className="text-xs mt-1">Classement</span>
+          </Link>
+          <Link to="/profile" className="flex flex-col items-center py-2 px-3 text-gray-600 hover:text-purple-600">
+            <span className="text-2xl">👤</span>
+            <span className="text-xs mt-1">Profil</span>
           </Link>
         </div>
-      </div>
+      </nav>
     </div>
   );
 }
