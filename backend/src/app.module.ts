@@ -13,6 +13,7 @@ import { VotesModule } from './votes/votes.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { HealthModule } from './health/health.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { HealthModule } from './health/health.module';
     WebhooksModule,
     LeaderboardModule,
     HealthModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],
