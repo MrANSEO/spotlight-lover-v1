@@ -39,7 +39,7 @@ export default function PrivateLayout() {
                   <button className="text-gray-700 hover:text-purple-600 font-medium">
                     🛡️ Admin
                   </button>
-                  <div className="absolute hidden group-hover:block bg-white shadow-lg rounded-lg mt-2 py-2 w-48 z-10">
+                  <div className="absolute hidden group-hover:block bg-white shadow-lg rounded-lg mt-2 py-2 w-56 z-10">
                     <Link 
                       to="/admin" 
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -59,10 +59,28 @@ export default function PrivateLayout() {
                       🎬 Candidats
                     </Link>
                     <Link 
+                      to="/admin/votes" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      ❤️ Votes
+                    </Link>
+                    <Link 
                       to="/admin/webhooks" 
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     >
                       🔔 Webhooks
+                    </Link>
+                    <Link 
+                      to="/admin/analytics" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      📈 Analytics
+                    </Link>
+                    <Link 
+                      to="/admin/audit-logs" 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      📋 Audit Logs
                     </Link>
                   </div>
                 </div>

@@ -24,6 +24,9 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminCandidatesPage from './pages/admin/AdminCandidatesPage';
 import AdminWebhooksPage from './pages/admin/AdminWebhooksPage';
+import AdminVotesPage from './pages/admin/AdminVotesPage';
+import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
+import AdminAuditLogsPage from './pages/admin/AdminAuditLogsPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) => {
@@ -122,10 +125,34 @@ function App() {
               }
             />
             <Route
+              path="/admin/votes"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminVotesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/admin/webhooks"
               element={
                 <ProtectedRoute adminOnly>
                   <AdminWebhooksPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/analytics"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminAnalyticsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/audit-logs"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminAuditLogsPage />
                 </ProtectedRoute>
               }
             />
