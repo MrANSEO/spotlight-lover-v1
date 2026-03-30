@@ -1,3 +1,4 @@
+// backend/src/prisma.service.ts
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -8,9 +9,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor() {
     const connectionString = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
     
-    const pool = new Pool({ connectionString });
+    // ✅ CORRECTION : accepter les certificats auto-signés pour Render
+    const pool = new Pool({ 
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false, // ← Accepte les certificats auto-signés
+      },
+    });
+    
     const adapter = new PrismaPg(pool);
-
+    
     super({
       adapter,
       log: ['error', 'warn'],
