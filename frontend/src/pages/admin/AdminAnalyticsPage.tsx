@@ -193,7 +193,7 @@ export default function AdminAnalyticsPage() {
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis tickFormatter={formatFCFA} tick={{ fontSize: 11 }} />
               <Tooltip
-                formatter={(v: number) => [`${v.toLocaleString('fr-FR')} FCFA`, 'Revenus']}
+                formatter={(v: any) => [`${Number(v || 0).toLocaleString('fr-FR')} FCFA`, 'Revenus']}
                 labelStyle={{ fontWeight: 'bold' }}
               />
               <Legend />
@@ -222,7 +222,7 @@ export default function AdminAnalyticsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => [v, 'Votes']} />
+              <Tooltip formatter={(v: any) => [Number(v || 0), 'Votes']} />
               <Bar dataKey="totalVotes" name="Votes" fill="#ec4899" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -245,7 +245,7 @@ export default function AdminAnalyticsPage() {
                 width={120}
                 tick={{ fontSize: 11 }}
               />
-              <Tooltip formatter={(v: number) => [v, 'Votes']} />
+              <Tooltip formatter={(v: any) => [Number(v || 0), 'Votes']} />
               <Bar dataKey="totalVotes" name="Votes" fill="#7c3aed" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>

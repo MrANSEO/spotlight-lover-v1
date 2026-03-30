@@ -11,7 +11,7 @@ interface Props {
   candidateName?: string;
 }
 
-type TxStatus = 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+type TxStatus = 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PENDING'| 'CANCELLED';
 
 export default function PaymentStatusModal({
   transactionId,
