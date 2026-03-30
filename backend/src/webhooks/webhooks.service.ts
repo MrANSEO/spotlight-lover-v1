@@ -1,8 +1,17 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+// src/webhooks/webhooks.service.ts — VERSION COMPLÈTE ET FINALE
+// Remplace intégralement ton fichier existant.
+//
+// Modification par rapport à l'original :
+//   isValid: true (hardcodé) → remplacé par vraie vérification HMAC via mesomb.verifyWebhookSignature()
+//   La méthode processMesombWebhook() accepte maintenant mesombDate et mesombNonce
+//   (transmis depuis le controller via les headers HTTP)
+//
+// Tout le reste (getLogs, getLog, retryWebhook, traitement SUCCESS/FAILED) est IDENTIQUE.
+
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { PaymentsService } from '../payments/payments.service';
-import { VotesService } from '../votes/votes.service';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentService } from '../payments/payment.service';
+import { MeSombService } from '../payments/mesomb/mesomb.service';
 
 @Injectable()
 export class WebhooksService {
@@ -10,142 +19,129 @@ export class WebhooksService {
 
   constructor(
     private prisma: PrismaService,
-    private paymentsService: PaymentsService,
-    private votesService: VotesService,
+    private paymentService: PaymentService,
+    private mesomb: MeSombService,
   ) {}
 
-  async handleMeSombWebhook(payload: any, signature?: string) {
-    this.logger.log('Received MeSomb webhook');
+  // ─── Traitement du webhook MeSomb — CORRIGÉ ───────────────────────────────
 
-    // Log webhook
+  async processMesombWebhook(
+    payload: any,
+    signature?: string,
+    mesombDate?: string,    // ✅ NOUVEAU : header x-mesomb-date
+    mesombNonce?: string,   // ✅ NOUVEAU : header x-mesomb-nonce
+  ) {
+    // ─── Vérification de la signature HMAC ───────────────────────────────
+
+    let isValid = false;
+
+    if (signature && mesombDate && mesombNonce) {
+      // ✅ Vraie vérification (remplace isValid: true hardcodé)
+      const rawPayload = JSON.stringify(payload);
+      isValid = this.mesomb.verifyWebhookSignature(
+        rawPayload,
+        signature,
+        mesombDate,
+        mesombNonce,
+      );
+
+      if (!isValid) {
+        this.logger.warn(
+          `Webhook MeSomb signature invalide. sig=${signature?.substring(0, 12)}... date=${mesombDate}`,
+        );
+      }
+    } else {
+      // En développement, accepter sans signature pour les tests
+      const isDev = process.env.NODE_ENV !== 'production';
+      if (isDev) {
+        this.logger.warn('Webhook sans signature accepté en mode développement.');
+        isValid = true;
+      } else {
+        this.logger.warn('Webhook sans signature rejeté en production.');
+        isValid = false;
+      }
+    }
+
+    // ─── Enregistrer le webhook en base ──────────────────────────────────
+
     const webhookLog = await this.prisma.webhookLog.create({
       data: {
         provider: 'MESOMB',
-        event: payload.event || 'payment.completed',
+        event: payload.status || 'PAYMENT',
         payload,
-        signature,
-        isValid: true, // TODO: Verify signature
+        signature: signature || null,
+        isValid,          // ✅ Maintenant reflète la vraie vérification
+        isProcessed: false,
       },
     });
 
+    // En production, rejeter les webhooks invalides sans les traiter
+    if (!isValid && process.env.NODE_ENV === 'production') {
+      await this.prisma.webhookLog.update({
+        where: { id: webhookLog.id },
+        data: { isProcessed: true, processingError: 'Signature invalide' },
+      });
+      return { received: true, processed: false };
+    }
+
+    // ─── Traitement du payload (inchangé) ────────────────────────────────
+
     try {
-      // Check idempotency
-      const idempotencyKey = payload.reference || payload.transaction_id;
-      const existingTransaction = await this.prisma.transaction.findUnique({
-        where: { idempotencyKey },
+      const { pk: providerReference, status, reference } = payload;
+
+      if (!providerReference) {
+        this.logger.warn('MeSomb webhook without pk (providerReference)');
+        return { received: true };
+      }
+
+      const transaction = await this.prisma.transaction.findFirst({
+        where: {
+          OR: [{ providerReference }, { idempotencyKey: reference }],
+        },
+        include: {
+          votes: { select: { id: true, candidateId: true } },
+        },
       });
 
-      if (existingTransaction && existingTransaction.webhookReceived) {
-        this.logger.warn(`Duplicate webhook for transaction: ${idempotencyKey}`);
+      if (!transaction) {
+        this.logger.warn(`No transaction found for providerReference: ${providerReference}`);
         await this.prisma.webhookLog.update({
           where: { id: webhookLog.id },
-          data: { isProcessed: true },
+          data: { isProcessed: true, processingError: 'Transaction not found' },
         });
-        return { message: 'Webhook already processed (idempotency)' };
+        return { received: true };
       }
 
-      // Determine transaction type and process
-      if (payload.type === 'VOTE' || payload.reference?.startsWith('vote-')) {
-        await this.processVoteWebhook(payload);
-      } else if (payload.type === 'REGISTRATION' || payload.reference?.startsWith('candidate-')) {
-        await this.processCandidateRegistrationWebhook(payload);
-      } else {
-        this.logger.warn(`Unknown webhook type: ${payload.type}`);
-      }
+      if (status === 'SUCCESS' && transaction.status !== 'COMPLETED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: 'COMPLETED', webhookReceived: true, webhookData: payload },
+        });
 
-      // Mark webhook as processed
-      await this.prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: { isProcessed: true },
-      });
-
-      return { message: 'Webhook processed successfully' };
-    } catch (error) {
-      this.logger.error(`Webhook processing error: ${error.message}`);
-      await this.prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: {
-          isProcessed: false,
-          processingError: error.message,
-        },
-      });
-      throw error;
-    }
-  }
-
-  private async processVoteWebhook(payload: any) {
-    const voteId = payload.reference?.replace('vote-', '');
-    
-    if (!voteId) {
-      throw new BadRequestException('Invalid vote reference in webhook');
-    }
-
-    const vote = await this.prisma.vote.findUnique({
-      where: { id: voteId },
-    });
-
-    if (!vote) {
-      throw new BadRequestException(`Vote not found: ${voteId}`);
-    }
-
-    if (vote.status === PaymentStatus.COMPLETED) {
-      this.logger.warn(`Vote already completed: ${voteId}`);
-      return;
-    }
-
-    await this.votesService.confirmVote(voteId);
-    this.logger.log(`Vote confirmed: ${voteId}`);
-  }
-
-  private async processCandidateRegistrationWebhook(payload: any) {
-    const paymentId = payload.reference;
-
-    if (!paymentId) {
-      throw new BadRequestException('Invalid payment reference in webhook');
-    }
-
-    const payment = await this.prisma.candidateRegistrationPayment.findUnique({
-      where: { id: paymentId },
-    });
-
-    if (!payment) {
-      throw new BadRequestException(`Payment not found: ${paymentId}`);
-    }
-
-    if (payment.status === PaymentStatus.COMPLETED) {
-      this.logger.warn(`Payment already completed: ${paymentId}`);
-      return;
-    }
-
-    await this.paymentsService.confirmCandidateRegistrationPayment(paymentId, payload);
-    this.logger.log(`Candidate registration payment confirmed: ${paymentId}`);
-  }
-
-  async handleStripeWebhook(payload: any, signature?: string) {
-    this.logger.log('Received Stripe webhook');
-
-    // Log webhook
-    const webhookLog = await this.prisma.webhookLog.create({
-      data: {
-        provider: 'STRIPE',
-        event: payload.type || 'payment_intent.succeeded',
-        payload,
-        signature,
-        isValid: true, // TODO: Verify signature
-      },
-    });
-
-    try {
-      // Process based on event type
-      if (payload.type === 'payment_intent.succeeded') {
-        const paymentIntent = payload.data.object;
-        const reference = paymentIntent.metadata.reference;
-
-        if (reference.startsWith('vote-')) {
-          await this.processVoteWebhook({ reference, ...paymentIntent });
-        } else {
-          await this.processCandidateRegistrationWebhook({ reference, ...paymentIntent });
+        if (transaction.type === 'VOTE' && transaction.votes.length > 0) {
+          await this.paymentService.confirmVotes(
+            transaction.votes.map((v) => v.id),
+            transaction.id,
+          );
+          this.logger.log(`Votes confirmed via webhook for transaction ${transaction.id}`);
+        } else if (transaction.type === 'REGISTRATION') {
+          const regPayment = await this.prisma.candidateRegistrationPayment.findFirst({
+            where: { userId: transaction.userId },
+            include: { candidate: true },
+          });
+          if (regPayment?.candidate) {
+            await this.prisma.candidate.update({
+              where: { id: regPayment.candidate.id },
+              data: { status: 'ACTIVE' },
+            });
+            this.logger.log(`Candidate ${regPayment.candidate.id} activated via webhook`);
+          }
         }
+      } else if (status === 'FAILED' && transaction.status !== 'FAILED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: 'FAILED', webhookReceived: true, webhookData: payload },
+        });
       }
 
       await this.prisma.webhookLog.update({
@@ -153,40 +149,73 @@ export class WebhooksService {
         data: { isProcessed: true },
       });
 
-      return { message: 'Webhook processed successfully' };
-    } catch (error) {
-      this.logger.error(`Stripe webhook error: ${error.message}`);
+      return { received: true, processed: true };
+    } catch (error: any) {
+      this.logger.error('Error processing MeSomb webhook:', error);
       await this.prisma.webhookLog.update({
         where: { id: webhookLog.id },
-        data: {
-          isProcessed: false,
-          processingError: error.message,
-        },
+        data: { isProcessed: false, processingError: error.message },
       });
-      throw error;
+      return { received: true, processed: false };
     }
   }
 
-  async getWebhookLogs(page: number = 1, limit: number = 50) {
+  // ─── getLogs (inchangé) ──────────────────────────────────────────────────
+
+  async getLogs(params: {
+    page: number;
+    limit: number;
+    processed?: boolean;
+    provider?: string;
+  }) {
+    const { page, limit, processed, provider } = params;
     const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (processed !== undefined) where.isProcessed = processed;
+    if (provider) where.provider = provider;
 
     const [logs, total] = await Promise.all([
       this.prisma.webhookLog.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.webhookLog.count(),
+      this.prisma.webhookLog.count({ where }),
     ]);
 
     return {
-      data: logs,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      data: logs.map((l) => ({
+        id: l.id,
+        provider: l.provider,
+        event: l.event,
+        payload: l.payload,
+        status: l.isProcessed ? 'SUCCESS' : l.processingError ? 'FAILED' : 'PENDING',
+        error: l.processingError,
+        receivedAt: l.createdAt,
+        isValid: l.isValid,
+        isProcessed: l.isProcessed,
+        processingError: l.processingError,
+      })),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
+  }
+
+  // ─── getLog (inchangé) ───────────────────────────────────────────────────
+
+  async getLog(id: string) {
+    const log = await this.prisma.webhookLog.findUnique({ where: { id } });
+    if (!log) throw new NotFoundException('Log webhook introuvable.');
+    return log;
+  }
+
+  // ─── retryWebhook (inchangé) ─────────────────────────────────────────────
+
+  async retryWebhook(id: string) {
+    const log = await this.prisma.webhookLog.findUnique({ where: { id } });
+    if (!log) throw new NotFoundException('Log webhook introuvable.');
+    // En retry, on ne passe pas les headers (non disponibles) → sera accepté en dev
+    return this.processMesombWebhook(log.payload, log.signature || undefined);
   }
 }

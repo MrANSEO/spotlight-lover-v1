@@ -1,4 +1,4 @@
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -8,10 +8,20 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
+# ─── Serve with nginx ────────────────────────────────────────
+FROM nginx:alpine AS production
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# SPA routing — redirect 404 to index.html
+RUN echo 'server { \
+  listen 80; \
+  root /usr/share/nginx/html; \
+  index index.html; \
+  location / { \
+    try_files $uri $uri/ /index.html; \
+  } \
+}' > /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

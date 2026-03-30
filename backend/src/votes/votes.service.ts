@@ -1,91 +1,142 @@
 import {
   Injectable,
   NotFoundException,
-  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { ConfigService } from '@nestjs/config';
-import { CreateVoteDto } from './dto/vote.dto';
-import { PaymentStatus, CandidateStatus, PaymentProvider } from '@prisma/client';
+import { PaymentStatus, CandidateStatus } from '@prisma/client';
 
 @Injectable()
 export class VotesService {
-  constructor(
-    private prisma: PrismaService,
-    private configService: ConfigService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
-  async initiateVote(userId: string, createVoteDto: CreateVoteDto, ipAddress?: string, userAgent?: string) {
-    // Verify candidate exists and is active
+  // Lecture seule — les votes sont créés via PaymentService
+  // Ce service expose uniquement les queries de lecture
+
+  async getCandidateVoteStats(candidateId: string) {
     const candidate = await this.prisma.candidate.findUnique({
-      where: { id: createVoteDto.candidateId },
-    });
-
-    if (!candidate) {
-      throw new NotFoundException('Candidate not found');
-    }
-
-    if (candidate.status !== CandidateStatus.ACTIVE) {
-      throw new BadRequestException('Cannot vote for inactive candidate');
-    }
-
-    const votePrice = parseInt(this.configService.get('VOTE_PRICE') || '100');
-    const amount = createVoteDto.amount || votePrice;
-
-    // Create vote with PENDING status
-    const vote = await this.prisma.vote.create({
-      data: {
-        candidateId: createVoteDto.candidateId,
-        voterId: userId,
-        amount,
-        currency: 'XOF',
-        status: PaymentStatus.PENDING,
-        provider: createVoteDto.paymentProvider,
-        ipAddress,
-        userAgent,
+      where: { id: candidateId },
+      include: {
+        _count: {
+          select: {
+            votesReceived: { where: { status: PaymentStatus.COMPLETED } },
+          },
+        },
       },
     });
 
-    // Create transaction record
-    const transaction = await this.prisma.transaction.create({
-      data: {
-        userId,
-        type: 'VOTE',
-        amount,
-        currency: 'XOF',
-        status: PaymentStatus.PENDING,
-        provider: createVoteDto.paymentProvider,
-        idempotencyKey: `vote-${vote.id}`,
-        ipAddress,
-        userAgent,
-      },
-    });
-
-    // Link vote to transaction
-    await this.prisma.vote.update({
-      where: { id: vote.id },
-      data: { transactionId: transaction.id },
-    });
+    if (!candidate) throw new NotFoundException('Candidat non trouvé.');
 
     return {
-      vote,
-      transaction,
-      message: 'Vote initiated. Please complete payment.',
-      paymentUrl: `/api/payments/vote/${vote.id}/process`,
+      candidateId,
+      stageName: candidate.stageName,
+      totalVotes: candidate._count.votesReceived,
+      totalAmount: 0,
+      rank: null,
     };
   }
 
+  async getMyVotes(userId: string, page = 1, limit = 10) {
+    const skip = (page - 1) * limit;
+
+    const [votes, total] = await Promise.all([
+      this.prisma.vote.findMany({
+        where: { voterId: userId, status: PaymentStatus.COMPLETED },
+        skip,
+        take: limit,
+        include: {
+          candidate: {
+            select: { stageName: true, thumbnailUrl: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.vote.count({
+        where: { voterId: userId, status: PaymentStatus.COMPLETED },
+      }),
+    ]);
+
+    return {
+      data: votes,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async getAllVotes(page = 1, limit = 20, status?: PaymentStatus) {
+    const skip = (page - 1) * limit;
+    const where = status ? { status } : {};
+
+    const [votes, total] = await Promise.all([
+      this.prisma.vote.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          candidate: { select: { stageName: true } },
+          voter: { select: { email: true } },
+          transaction: { select: { provider: true, providerReference: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.vote.count({ where }),
+    ]);
+
+    return {
+      data: votes,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async cancelVote(voteId: string, adminId: string) {
+    const vote = await this.prisma.vote.findUnique({ where: { id: voteId } });
+    if (!vote) throw new NotFoundException('Vote non trouvé.');
+    if (vote.status !== PaymentStatus.COMPLETED) {
+      throw new ForbiddenException('Seul un vote COMPLETED peut être annulé.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.vote.update({
+        where: { id: voteId },
+        data: { status: PaymentStatus.REFUNDED },
+      }),
+      this.prisma.leaderboardEntry.update({
+        where: { candidateId: vote.candidateId },
+        data: {
+          totalVotes: { decrement: 1 },
+          totalAmount: { decrement: vote.amount },
+          lastUpdated: new Date(),
+        },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          userId: adminId,
+          action: 'VOTE_CANCELLED',
+          resource: 'Vote',
+          details: {
+            voteId,
+            candidateId: vote.candidateId,
+            amount: vote.amount,
+          },
+        },
+      }),
+    ]);
+
+    return { message: 'Vote annulé avec succès.' };
+  }
+
+  /**
+   * Confirms a single vote (called from webhooks)
+   */
   async confirmVote(voteId: string) {
     const vote = await this.prisma.vote.findUnique({
       where: { id: voteId },
-      include: { candidate: true, transaction: true },
     });
 
     if (!vote) {
-      throw new NotFoundException('Vote not found');
+      throw new NotFoundException('Vote non trouvé.');
     }
 
-    // Update vote status
+    // Update vote status to COMPLETED
     await this.prisma.vote.update({
       where: { id: voteId },
       data: {
@@ -94,151 +145,20 @@ export class VotesService {
       },
     });
 
-    // Update transaction
-    if (vote.transactionId) {
-      await this.prisma.transaction.update({
-        where: { id: vote.transactionId },
-        data: {
-          status: PaymentStatus.COMPLETED,
-          webhookReceived: true,
-        },
-      });
-    }
-
-    // Update leaderboard (will be handled by LeaderboardService)
-    // For now, just ensure entry exists
-    const leaderboardEntry = await this.prisma.leaderboardEntry.findUnique({
+    // Update leaderboard
+    await this.prisma.leaderboardEntry.upsert({
       where: { candidateId: vote.candidateId },
+      create: {
+        candidateId: vote.candidateId,
+        totalVotes: 1,
+        totalAmount: vote.amount,
+        lastUpdated: new Date(),
+      },
+      update: {
+        totalVotes: { increment: 1 },
+        totalAmount: { increment: vote.amount },
+        lastUpdated: new Date(),
+      },
     });
-
-    if (leaderboardEntry) {
-      await this.prisma.leaderboardEntry.update({
-        where: { candidateId: vote.candidateId },
-        data: {
-          totalVotes: { increment: 1 },
-          totalAmount: { increment: vote.amount },
-          lastUpdated: new Date(),
-        },
-      });
-    } else {
-      await this.prisma.leaderboardEntry.create({
-        data: {
-          candidateId: vote.candidateId,
-          totalVotes: 1,
-          totalAmount: vote.amount,
-          lastUpdated: new Date(),
-        },
-      });
-    }
-
-    return {
-      message: 'Vote confirmed successfully',
-      vote,
-    };
-  }
-
-  async getMyVotes(userId: string, page: number = 1, limit: number = 10) {
-    const skip = (page - 1) * limit;
-
-    const [votes, total] = await Promise.all([
-      this.prisma.vote.findMany({
-        where: { voterId: userId },
-        skip,
-        take: limit,
-        include: {
-          candidate: {
-            select: {
-              id: true,
-              stageName: true,
-              thumbnailUrl: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.vote.count({ where: { voterId: userId } }),
-    ]);
-
-    return {
-      data: votes,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  async getCandidateVoteStats(candidateId: string) {
-    const [totalVotes, totalAmount, verifiedVotes] = await Promise.all([
-      this.prisma.vote.count({
-        where: {
-          candidateId,
-          status: PaymentStatus.COMPLETED,
-        },
-      }),
-      this.prisma.vote.aggregate({
-        where: {
-          candidateId,
-          status: PaymentStatus.COMPLETED,
-        },
-        _sum: { amount: true },
-      }),
-      this.prisma.vote.count({
-        where: {
-          candidateId,
-          status: PaymentStatus.COMPLETED,
-          isVerified: true,
-        },
-      }),
-    ]);
-
-    return {
-      candidateId,
-      totalVotes,
-      totalAmount: totalAmount._sum.amount || 0,
-      verifiedVotes,
-      currency: 'XOF',
-    };
-  }
-
-  async getAllVotes(page: number = 1, limit: number = 10) {
-    const skip = (page - 1) * limit;
-
-    const [votes, total] = await Promise.all([
-      this.prisma.vote.findMany({
-        skip,
-        take: limit,
-        include: {
-          candidate: {
-            select: {
-              id: true,
-              stageName: true,
-            },
-          },
-          voter: {
-            select: {
-              id: true,
-              email: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.vote.count(),
-    ]);
-
-    return {
-      data: votes,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
   }
 }

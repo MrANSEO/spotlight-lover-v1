@@ -1,62 +1,175 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import toast from 'react-hot-toast';
+import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import api from '../../services/api';
+
+interface ProfileForm { firstName: string; lastName: string; phone: string; email: string; }
+interface PasswordForm { currentPassword: string; newPassword: string; confirmPassword: string; }
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<'profile' | 'password' | 'danger'>('profile');
+  const [loading, setLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const profileForm = useForm<ProfileForm>({
+    defaultValues: { firstName: user?.firstName || '', lastName: user?.lastName || '', phone: '', email: user?.email || '' },
+  });
+  const passwordForm = useForm<PasswordForm>();
+
+  const saveProfile = async (data: ProfileForm) => {
+    setLoading(true);
+    try {
+      await api.patch('/me', data);
+      await refreshUser();
+      toast.success('Profil mis à jour !');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Erreur.');
+    } finally { setLoading(false); }
+  };
+
+  const changePassword = async (data: PasswordForm) => {
+    if (data.newPassword !== data.confirmPassword) { toast.error('Les mots de passe ne correspondent pas.'); return; }
+    setLoading(true);
+    try {
+      await api.patch('/me', { currentPassword: data.currentPassword, newPassword: data.newPassword });
+      toast.success('Mot de passe modifié !');
+      passwordForm.reset();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Mot de passe actuel incorrect.');
+    } finally { setLoading(false); }
+  };
+
+  const deleteAccount = async () => {
+    setLoading(true);
+    try {
+      await api.delete('/me');
+      logout();
+      toast.success('Compte supprimé.');
+      navigate('/');
+    } catch { toast.error('Erreur lors de la suppression.'); }
+    finally { setLoading(false); }
+  };
+
+  const tabs = [
+    { id: 'profile', icon: User, label: 'Profil' },
+    { id: 'password', icon: Lock, label: 'Mot de passe' },
+    { id: 'danger', icon: Trash2, label: 'Compte' },
+  ] as const;
 
   return (
-    <div className="container mx-auto px-4 py-8 pb-24">
-      <h1 className="text-3xl font-bold mb-8">Mon Profil</h1>
-
-      <div className="bg-white rounded-lg shadow-lg p-8 max-w-2xl">
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-gray-500">Email</label>
-            <p className="text-lg">{user?.email}</p>
+    <div className="min-h-screen bg-gray-50 pb-24">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-purple-700 to-pink-600 text-white px-4 pt-10 pb-16">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-2xl font-bold">
+            {user?.firstName?.[0] || user?.email?.[0]?.toUpperCase() || '?'}
           </div>
-
           <div>
-            <label className="text-sm font-medium text-gray-500">Nom</label>
-            <p className="text-lg">{user?.firstName} {user?.lastName}</p>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-500">Rôle</label>
-            <p className="text-lg">
-              <span className={`px-3 py-1 rounded-full text-sm ${
-                user?.role === 'ADMIN' ? 'bg-red-100 text-red-800' :
-                user?.role === 'CANDIDATE' ? 'bg-purple-100 text-purple-800' :
-                'bg-gray-100 text-gray-800'
-              }`}>
-                {user?.role}
-              </span>
-            </p>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-500">Authentification 2FA</label>
-            <p className="text-lg">
-              {user?.twoFactorEnabled ? (
-                <span className="text-green-600">✔ Activé</span>
-              ) : (
-                <span className="text-gray-400">❌ Désactivé</span>
-              )}
-            </p>
+            <h1 className="text-xl font-bold">{user?.firstName || 'Mon profil'} {user?.lastName || ''}</h1>
+            <p className="text-purple-200 text-sm">{user?.email}</p>
+            <span className="inline-block mt-1 px-2 py-0.5 bg-white/20 rounded-full text-xs">{user?.role}</span>
           </div>
         </div>
+      </div>
 
-        <div className="mt-8 space-y-4">
-          {user?.role !== 'CANDIDATE' && (
-            <button className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
-              🎬 Devenir Candidat (500 FCFA)
+      <div className="px-4 -mt-6">
+        {/* Tabs */}
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          {tabs.map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`w-full flex items-center justify-between px-5 py-4 border-b border-gray-100 last:border-0 transition ${tab === id ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon size={18} className={tab === id ? 'text-purple-600' : 'text-gray-400'} />
+                <span className={`font-medium ${tab === id ? 'text-purple-700' : 'text-gray-700'}`}>{label}</span>
+              </div>
+              <ChevronRight size={16} className="text-gray-300" />
             </button>
-          )}
-          
-          {!user?.twoFactorEnabled && (
-            <button className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700">
-              🔒 Activer l'authentification 2FA
-            </button>
-          )}
+          ))}
         </div>
+
+        {/* Profile Tab */}
+        {tab === 'profile' && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="font-bold text-gray-900 mb-4">Informations personnelles</h2>
+            <form onSubmit={profileForm.handleSubmit(saveProfile)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Prénom</label>
+                  <input className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" {...profileForm.register('firstName')} />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Nom</label>
+                  <input className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" {...profileForm.register('lastName')} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Email</label>
+                <input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" {...profileForm.register('email')} />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Téléphone</label>
+                <input type="tel" placeholder="6XXXXXXXX" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" {...profileForm.register('phone')} />
+              </div>
+              <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+                {loading && <Loader2 size={16} className="animate-spin" />}
+                Enregistrer
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Password Tab */}
+        {tab === 'password' && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="font-bold text-gray-900 mb-4">Changer le mot de passe</h2>
+            <form onSubmit={passwordForm.handleSubmit(changePassword)} className="space-y-4">
+              {['currentPassword', 'newPassword', 'confirmPassword'].map((field, i) => (
+                <div key={field}>
+                  <label className="block text-sm text-gray-600 mb-1">{['Mot de passe actuel', 'Nouveau mot de passe', 'Confirmer le nouveau'][i]}</label>
+                  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••" {...passwordForm.register(field as any, { required: true, minLength: field !== 'currentPassword' ? 8 : 1 })} />
+                </div>
+              ))}
+              <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+                {loading && <Loader2 size={16} className="animate-spin" />}
+                Changer le mot de passe
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Danger Tab */}
+        {tab === 'danger' && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="font-bold text-red-600 mb-2">Zone dangereuse</h2>
+            <p className="text-sm text-gray-600 mb-5">La suppression de votre compte est irréversible. Toutes vos données seront effacées.</p>
+            {!showDeleteConfirm ? (
+              <button onClick={() => setShowDeleteConfirm(true)} className="w-full py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl font-semibold flex items-center justify-center gap-2">
+                <Trash2 size={16} /> Supprimer mon compte
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+                  ⚠️ Êtes-vous sûr ? Cette action est définitive et ne peut pas être annulée.
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold">Annuler</button>
+                  <button onClick={deleteAccount} disabled={loading} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+                    {loading && <Loader2 size={16} className="animate-spin" />}
+                    Confirmer
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

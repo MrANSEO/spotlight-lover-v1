@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { RefreshCw, Loader, X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '../../services/api';
 
 interface WebhookLog {
@@ -6,9 +8,10 @@ interface WebhookLog {
   provider: string;
   event: string;
   payload: any;
-  status: string;
-  error: string | null;
-  receivedAt: string;
+  isValid: boolean;
+  isProcessed: boolean;
+  processingError: string | null;
+  createdAt: string;
 }
 
 export default function AdminWebhooksPage() {
@@ -16,186 +19,201 @@ export default function AdminWebhooksPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [selectedWebhook, setSelectedWebhook] = useState<WebhookLog | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   useEffect(() => {
     loadWebhooks();
   }, [filter]);
 
   const loadWebhooks = async () => {
+    setLoading(true);
     try {
-      const params = filter !== 'ALL' ? `?status=${filter}` : '';
+      const params = filter !== 'ALL' ? `?processed=${filter === 'PROCESSED'}` : '';
       const response = await api.get(`/webhooks/logs${params}`);
       setWebhooks(response.data.data || response.data);
-    } catch (error) {
-      console.error('Failed to load webhook logs:', error);
+    } catch {
+      toast.error('Impossible de charger les webhooks.');
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ CORRECTION : alert() → toast
   const retryWebhook = async (webhookId: string) => {
-    if (!confirm('Relancer le traitement de ce webhook ?')) return;
+    if (!window.confirm('Relancer le traitement de ce webhook ?')) return;
 
+    setRetrying(webhookId);
     try {
       await api.post(`/webhooks/${webhookId}/retry`);
-      alert('Webhook retraité avec succès !');
+      toast.success('✅ Webhook retraité avec succès !');
       loadWebhooks();
     } catch (error: any) {
-      alert(error.response?.data?.message || 'Échec du retraitement');
+      toast.error(error.response?.data?.message || 'Échec du retraitement.');
+    } finally {
+      setRetrying(null);
     }
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">Chargement...</div>;
-  }
+  const filterButtons = [
+    { key: 'ALL',        label: 'Tous' },
+    { key: 'PROCESSED',  label: 'Traités' },
+    { key: 'PENDING',    label: 'Non traités' },
+  ];
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8">🔔 Logs des Webhooks</h1>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
-        <div className="flex items-center space-x-4">
-          <span className="font-semibold">Filtrer par statut :</span>
-          {['ALL', 'SUCCESS', 'FAILED', 'DUPLICATE'].map((status) => (
-            <button
-              key={status}
-              onClick={() => setFilter(status)}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                filter === status
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              {status}
-            </button>
-          ))}
-        </div>
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">🔔 Logs Webhooks MeSomb</h1>
+        <button
+          onClick={loadWebhooks}
+          className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition"
+        >
+          <RefreshCw size={14} /> Actualiser
+        </button>
       </div>
 
-      {/* Webhooks table */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Date/Heure</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Provider</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Event</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Statut</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {webhooks.map((webhook) => (
-              <tr key={webhook.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {new Date(webhook.receivedAt).toLocaleString('fr-FR')}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                    webhook.provider === 'MESOMB' ? 'bg-yellow-100 text-yellow-700' :
-                    webhook.provider === 'STRIPE' ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {webhook.provider}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm font-mono">{webhook.event}</td>
-                <td className="px-6 py-4 text-sm">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                    webhook.status === 'SUCCESS' ? 'bg-green-100 text-green-700' :
-                    webhook.status === 'FAILED' ? 'bg-red-100 text-red-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {webhook.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm space-x-2">
-                  <button
-                    onClick={() => setSelectedWebhook(webhook)}
-                    className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                  >
-                    Détails
-                  </button>
-                  {webhook.status === 'FAILED' && (
-                    <button
-                      onClick={() => retryWebhook(webhook.id)}
-                      className="px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
-                    >
-                      Relancer
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total', value: webhooks.length, color: 'text-gray-900' },
+          { label: 'Traités', value: webhooks.filter(w => w.isProcessed).length, color: 'text-green-600' },
+          { label: 'En attente', value: webhooks.filter(w => !w.isProcessed).length, color: 'text-orange-600' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-white rounded-2xl shadow-sm p-4 text-center">
+            <p className="text-xs text-gray-500 font-semibold mb-1">{label}</p>
+            <p className={`text-2xl font-bold ${color}`}>{value}</p>
+          </div>
+        ))}
+      </div>
 
-        {webhooks.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            Aucun webhook enregistré.
+      {/* Filtres */}
+      <div className="bg-white rounded-2xl shadow-sm p-4 flex gap-2">
+        {filterButtons.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key)}
+            className={`px-4 py-2 rounded-xl font-semibold text-sm transition ${
+              filter === key ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <Loader className="w-7 h-7 animate-spin text-purple-600" />
+          </div>
+        ) : webhooks.length === 0 ? (
+          <p className="text-center text-gray-500 py-12 text-sm">Aucun webhook trouvé.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[600px]">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Date/Heure</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Provider</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Événement</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Statut</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {webhooks.map((webhook) => (
+                  <tr key={webhook.id} className="hover:bg-gray-50 transition">
+                    <td className="px-5 py-4 text-xs text-gray-500">
+                      {new Date(webhook.createdAt).toLocaleString('fr-FR')}
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700">
+                        {webhook.provider}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-mono text-gray-700">{webhook.event}</td>
+                    <td className="px-5 py-4">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        webhook.isProcessed
+                          ? 'bg-green-100 text-green-700'
+                          : webhook.processingError
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {webhook.isProcessed ? '✅ Traité' : webhook.processingError ? '❌ Erreur' : '⏳ En attente'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedWebhook(webhook)}
+                        className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold hover:bg-blue-200 transition"
+                      >
+                        Détails
+                      </button>
+                      {!webhook.isProcessed && (
+                        <button
+                          onClick={() => retryWebhook(webhook.id)}
+                          disabled={retrying === webhook.id}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-xs font-semibold hover:bg-orange-200 transition disabled:opacity-60"
+                        >
+                          {retrying === webhook.id
+                            ? <><Loader size={12} className="animate-spin" /> Relance...</>
+                            : '🔄 Relancer'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      {/* Webhook Details Modal */}
+      {/* Modal détails webhook */}
       {selectedWebhook && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={() => setSelectedWebhook(null)}
         >
-          <div 
-            className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[80vh] overflow-y-auto"
+          <div
+            className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Détails du Webhook</h2>
-              <button 
-                onClick={() => setSelectedWebhook(null)}
-                className="text-gray-500 hover:text-gray-700 text-2xl"
-              >
-                ✕
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-bold text-gray-900 text-lg">Détails du webhook</h2>
+              <button onClick={() => setSelectedWebhook(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={22} />
               </button>
             </div>
 
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-semibold text-gray-600">ID</label>
-                <p className="font-mono text-sm bg-gray-100 p-2 rounded">{selectedWebhook.id}</p>
-              </div>
+              {[
+                { label: 'ID', value: selectedWebhook.id, mono: true },
+                { label: 'Provider', value: selectedWebhook.provider },
+                { label: 'Événement', value: selectedWebhook.event, mono: true },
+                { label: 'Date', value: new Date(selectedWebhook.createdAt).toLocaleString('fr-FR') },
+                { label: 'Valide', value: selectedWebhook.isValid ? '✅ Oui' : '❌ Non' },
+                { label: 'Traité', value: selectedWebhook.isProcessed ? '✅ Oui' : '❌ Non' },
+              ].map(({ label, value, mono }) => (
+                <div key={label} className="flex justify-between items-start py-2 border-b border-gray-50">
+                  <span className="text-gray-500 text-sm font-medium">{label}</span>
+                  <span className={`text-gray-900 text-sm font-semibold ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
+                </div>
+              ))}
 
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Date/Heure</label>
-                <p className="text-sm">{new Date(selectedWebhook.receivedAt).toLocaleString('fr-FR')}</p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Provider</label>
-                <p className="text-sm">{selectedWebhook.provider}</p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Event</label>
-                <p className="text-sm font-mono">{selectedWebhook.event}</p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Statut</label>
-                <p className="text-sm">{selectedWebhook.status}</p>
-              </div>
-
-              {selectedWebhook.error && (
-                <div>
-                  <label className="text-sm font-semibold text-red-600">Erreur</label>
-                  <p className="text-sm text-red-700 bg-red-50 p-3 rounded">
-                    {selectedWebhook.error}
-                  </p>
+              {selectedWebhook.processingError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                  <p className="text-red-700 text-xs font-semibold mb-1">Erreur de traitement</p>
+                  <p className="text-red-600 text-xs font-mono">{selectedWebhook.processingError}</p>
                 </div>
               )}
 
               <div>
-                <label className="text-sm font-semibold text-gray-600">Payload</label>
-                <pre className="text-xs bg-gray-900 text-green-400 p-4 rounded overflow-x-auto">
+                <p className="text-gray-500 text-sm font-medium mb-2">Payload</p>
+                <pre className="text-xs bg-gray-900 text-green-400 p-4 rounded-xl overflow-x-auto">
                   {JSON.stringify(selectedWebhook.payload, null, 2)}
                 </pre>
               </div>

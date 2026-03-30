@@ -1,11 +1,11 @@
+import { Controller, Get, Query, UseGuards, Header } from '@nestjs/common';
 import {
-  Controller,
-  Get,
-  Query,
-  UseGuards,
-  Header,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiQuery } from '@nestjs/swagger';
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../common/guards/auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -40,7 +40,9 @@ export class AnalyticsController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Vote statistics retrieved' })
   getVotesByCandidate(@Query('limit') limit?: string) {
-    return this.analyticsService.getVotesByCandidate(limit ? parseInt(limit) : 10);
+    return this.analyticsService.getVotesByCandidate(
+      limit ? parseInt(limit) : 10,
+    );
   }
 
   @Get('payments')
@@ -67,11 +69,16 @@ export class AnalyticsController {
 
   @Get('export')
   @ApiOperation({ summary: 'Export data to CSV (Admin only)' })
-  @ApiQuery({ name: 'type', enum: ['users', 'candidates', 'votes', 'transactions'] })
+  @ApiQuery({
+    name: 'type',
+    enum: ['users', 'candidates', 'votes', 'transactions'],
+  })
   @ApiResponse({ status: 200, description: 'CSV data exported' })
   @Header('Content-Type', 'text/csv')
   @Header('Content-Disposition', 'attachment; filename="export.csv"')
-  async exportData(@Query('type') type: 'users' | 'candidates' | 'votes' | 'transactions') {
+  async exportData(
+    @Query('type') type: 'users' | 'candidates' | 'votes' | 'transactions',
+  ) {
     return this.analyticsService.exportDataToCsv(type);
   }
 }

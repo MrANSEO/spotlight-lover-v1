@@ -1,295 +1,342 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate, Link } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { Star, Phone, CheckCircle, Loader, AlertCircle, X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
+
+interface Step1Data {
+  stageName: string;
+  bio: string;
+}
+
+interface Step2Data {
+  phone: string;
+  operator: 'MTN' | 'ORANGE';
+}
+
+type Step = 'info' | 'payment' | 'polling' | 'success';
 
 export default function BecomeCandidatePage() {
-  const { user } = useAuth();
   const navigate = useNavigate();
-  
-  const [formData, setFormData] = useState({
-    stageName: '',
-    bio: '',
-    phoneNumber: '',
-  });
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-  const [step, setStep] = useState<'form' | 'payment' | 'success'>('form');
-  const [paymentData, setPaymentData] = useState<any>(null);
+  const { user, refreshUser } = useAuth();
+  const [step, setStep] = useState<Step>('info');
+  const [candidateId, setCandidateId] = useState<string | null>(null);
+  const [transactionId, setTransactionId] = useState<string | null>(null);
+  const [pollCount, setPollCount] = useState(0);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  const step1Form = useForm<Step1Data>();
+  const step2Form = useForm<Step2Data>({ defaultValues: { operator: 'MTN' } });
 
-  const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // ─── Étape 1 : Créer le profil candidat ────────────────────────────────
 
-    // Validation
-    const validFormats = ['video/mp4', 'video/webm', 'video/quicktime'];
-    if (!validFormats.includes(file.type)) {
-      setError('Format vidéo non supporté. Utilisez MP4, WebM ou MOV.');
-      return;
-    }
-
-    const maxSize = 200 * 1024 * 1024; // 200 MB
-    if (file.size > maxSize) {
-      setError('Vidéo trop volumineuse (max 200 MB).');
-      return;
-    }
-
-    setVideoFile(file);
-    setError('');
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const onSubmitStep1 = async (data: Step1Data) => {
     if (!user) {
-      setError('Vous devez être connecté pour devenir candidat.');
+      toast.error('Vous devez être connecté.');
       navigate('/login');
       return;
     }
 
-    if (!videoFile) {
-      setError('Veuillez sélectionner une vidéo.');
-      return;
-    }
-
-    if (formData.stageName.trim().length < 3) {
-      setError('Le nom de scène doit contenir au moins 3 caractères.');
-      return;
-    }
-
-    setUploading(true);
-    setError('');
-
     try {
-      // Step 1: Upload video to Cloudinary
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', videoFile);
-      uploadFormData.append('type', 'CANDIDATE_VIDEO');
-
-      const uploadResponse = await api.post('/upload/video', uploadFormData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const res = await api.post('/candidates', {
+        stageName: data.stageName,
+        bio: data.bio,
+        paymentProvider: 'MESOMB',
       });
-
-      const { url: videoUrl, thumbnailUrl } = uploadResponse.data;
-
-      // Step 2: Register as candidate (triggers payment)
-      const registrationResponse = await api.post('/candidates/register', {
-        stageName: formData.stageName,
-        bio: formData.bio || null,
-        phoneNumber: formData.phoneNumber,
-        videoUrl,
-        thumbnailUrl,
-        paymentProvider: 'MESOMB', // Default payment provider
-      });
-
-      const { candidate, payment } = registrationResponse.data;
-      
-      setPaymentData({
-        transactionId: payment.transactionId,
-        amount: payment.amount,
-        phoneNumber: formData.phoneNumber,
-        candidateId: candidate.id,
-      });
-      
+      setCandidateId(res.data.candidateId);
       setStep('payment');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Erreur lors de l\'inscription');
-    } finally {
-      setUploading(false);
+      toast.error(err.response?.data?.message || 'Erreur lors de la création du profil.');
     }
   };
 
-  const checkPaymentStatus = async () => {
+  // ─── Étape 2 : Initier le paiement d'inscription ───────────────────────
+
+  const onSubmitStep2 = async (data: Step2Data) => {
     try {
-      const response = await api.get(`/payments/status/${paymentData.transactionId}`);
-      const { status } = response.data;
+      const res = await api.post('/payments/candidate-registration', {
+        candidateId,
+        phone: data.phone,
+        operator: data.operator,
+      });
 
-      if (status === 'COMPLETED') {
+      if (res.data.status === 'COMPLETED') {
+        await refreshUser();
         setStep('success');
-      } else if (status === 'FAILED') {
-        setError('Le paiement a échoué. Veuillez réessayer.');
-        setStep('form');
-      } else {
-        // Still pending, check again in 5 seconds
-        setTimeout(checkPaymentStatus, 5000);
+        return;
       }
-    } catch (err) {
-      console.error('Failed to check payment status:', err);
-      setTimeout(checkPaymentStatus, 5000); // Retry
+
+      setTransactionId(res.data.transactionId);
+      setStep('polling');
+      startPolling(res.data.transactionId);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Erreur lors du paiement.');
     }
   };
 
-  if (!user) {
-    return (
-      <div className="container mx-auto px-4 py-12 text-center">
-        <h1 className="text-3xl font-bold mb-4">Devenez Candidat</h1>
-        <p className="text-gray-600 mb-8">Vous devez créer un compte pour devenir candidat.</p>
-        <a 
-          href="/register" 
-          className="inline-block px-8 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700"
-        >
-          Créer un compte
-        </a>
-      </div>
-    );
-  }
+  // ─── Polling statut paiement ────────────────────────────────────────────
 
-  if (step === 'success') {
-    return (
-      <div className="container mx-auto px-4 py-12 max-w-2xl text-center">
-        <div className="bg-green-50 border border-green-200 rounded-lg p-8">
-          <div className="text-6xl mb-4">🎉</div>
-          <h1 className="text-3xl font-bold text-green-700 mb-4">Félicitations !</h1>
-          <p className="text-lg text-gray-700 mb-6">
-            Votre inscription est confirmée. Votre vidéo est en cours de modération et sera publiée sous peu.
-          </p>
-          <button 
-            onClick={() => navigate('/feed')}
-            className="px-8 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700"
-          >
-            Voir les candidats
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const startPolling = (txId: string) => {
+    let count = 0;
+    const interval = setInterval(async () => {
+      count++;
+      setPollCount(count);
+      try {
+        const res = await api.get(`/payments/status/${txId}`);
+        if (res.data.status === 'COMPLETED') {
+          clearInterval(interval);
+          await refreshUser();
+          setStep('success');
+        } else if (res.data.status === 'FAILED') {
+          clearInterval(interval);
+          toast.error('Paiement échoué. Réessayez.');
+          setStep('payment');
+        } else if (count >= 20) {
+          clearInterval(interval);
+          toast.error('Délai dépassé. Vérifiez votre téléphone et réessayez.');
+          setStep('payment');
+        }
+      } catch { /* continuer */ }
+    }, 3000);
+  };
 
-  if (step === 'payment') {
-    // Auto-check payment status
-    if (paymentData && !error) {
-      setTimeout(checkPaymentStatus, 3000);
-    }
-
-    return (
-      <div className="container mx-auto px-4 py-12 max-w-2xl text-center">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8">
-          <div className="text-6xl mb-4">💳</div>
-          <h1 className="text-3xl font-bold text-yellow-700 mb-4">Paiement en attente</h1>
-          <p className="text-lg text-gray-700 mb-4">
-            Montant : <strong className="text-2xl text-purple-600">500 FCFA</strong>
-          </p>
-          <p className="text-gray-600 mb-6">
-            Un message de paiement a été envoyé au <strong>{paymentData?.phoneNumber}</strong>.
-            Veuillez valider le paiement sur votre téléphone.
-          </p>
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
-          </div>
-          <p className="text-sm text-gray-500 mt-4">
-            Vérification automatique du paiement en cours...
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // ─── Rendu selon l'étape ────────────────────────────────────────────────
 
   return (
-    <div className="container mx-auto px-4 py-12 max-w-3xl">
-      <h1 className="text-4xl font-bold text-center mb-8">🎬 Devenir Candidat</h1>
-      
-      <div className="bg-purple-50 border border-purple-200 rounded-lg p-6 mb-8">
-        <h3 className="font-semibold text-lg mb-2">Conditions d'inscription :</h3>
-        <ul className="space-y-2 text-sm text-gray-700">
-          <li>✓ Frais d'inscription : <strong>500 FCFA</strong> (paiement Mobile Money)</li>
-          <li>✓ Vidéo de talent (max 90 secondes, 200 MB)</li>
-          <li>✓ Formats acceptés : MP4, WebM, MOV</li>
-          <li>✓ Votre vidéo sera modérée avant publication</li>
-        </ul>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-lg">
+
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Star size={32} className="text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Devenir candidat</h1>
+          <p className="text-gray-500 mt-1 text-sm">Inscription payante — 500 FCFA via Mobile Money</p>
+        </div>
+
+        {/* Indicateur d'étapes */}
+        {(step === 'info' || step === 'payment') && (
+          <div className="flex items-center gap-2 mb-6">
+            {['Profil', 'Paiement'].map((label, i) => {
+              const active = (i === 0 && step === 'info') || (i === 1 && step === 'payment');
+              const done = (i === 0 && step === 'payment');
+              return (
+                <div key={label} className="flex items-center gap-2 flex-1">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                    done ? 'bg-green-500 text-white' :
+                    active ? 'bg-purple-600 text-white' :
+                    'bg-gray-200 text-gray-500'
+                  }`}>
+                    {done ? '✓' : i + 1}
+                  </div>
+                  <span className={`text-sm font-semibold ${active ? 'text-purple-700' : done ? 'text-green-700' : 'text-gray-400'}`}>
+                    {label}
+                  </span>
+                  {i < 1 && <div className="flex-1 h-0.5 bg-gray-200 mx-1" />}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="bg-white rounded-3xl shadow-xl p-6">
+
+          {/* ─── Étape 1 : Infos profil ─────────────────────────────────── */}
+          {step === 'info' && (
+            <form onSubmit={step1Form.handleSubmit(onSubmitStep1)} className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Nom de scène *
+                </label>
+                <input
+                  {...step1Form.register('stageName', {
+                    required: 'Le nom de scène est obligatoire',
+                    minLength: { value: 2, message: 'Minimum 2 caractères' },
+                    maxLength: { value: 50, message: 'Maximum 50 caractères' },
+                  })}
+                  placeholder="Le nom que vous utiliserez dans le concours"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm"
+                />
+                {step1Form.formState.errors.stageName && (
+                  <p className="text-red-500 text-xs mt-1.5">{step1Form.formState.errors.stageName.message}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Biographie
+                </label>
+                <textarea
+                  {...step1Form.register('bio', {
+                    maxLength: { value: 500, message: 'Maximum 500 caractères' },
+                  })}
+                  rows={3}
+                  placeholder="Présentez-vous en quelques mots..."
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm resize-none"
+                />
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">
+                <AlertCircle size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-blue-700">
+                  <p className="font-semibold mb-1">Ce qui vous attend :</p>
+                  <ul className="space-y-0.5 text-blue-600">
+                    <li>• Paiement de 500 FCFA via Mobile Money</li>
+                    <li>• Upload d'une vidéo (60–90 secondes max)</li>
+                    <li>• Votre vidéo visible par tous les votants</li>
+                    <li>• Gain possible : jusqu'à 50 000 FCFA</li>
+                  </ul>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={step1Form.formState.isSubmitting}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-base shadow-lg hover:shadow-xl transition disabled:opacity-70 flex items-center justify-center gap-2"
+              >
+                {step1Form.formState.isSubmitting
+                  ? <><Loader size={18} className="animate-spin" /> Création du profil...</>
+                  : 'Continuer vers le paiement →'}
+              </button>
+
+              <p className="text-center text-sm text-gray-500">
+                Vous avez déjà un compte candidat ?{' '}
+                <Link to="/candidate/dashboard" className="text-purple-600 font-semibold hover:underline">
+                  Mon tableau de bord
+                </Link>
+              </p>
+            </form>
+          )}
+
+          {/* ─── Étape 2 : Paiement ─────────────────────────────────────── */}
+          {step === 'payment' && (
+            <form onSubmit={step2Form.handleSubmit(onSubmitStep2)} className="space-y-5">
+              <div className="bg-purple-50 rounded-2xl p-4 text-center mb-2">
+                <p className="text-3xl font-bold text-purple-700">500 FCFA</p>
+                <p className="text-sm text-purple-500 mt-1">Frais d'inscription — paiement unique</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Opérateur Mobile Money
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['MTN', 'ORANGE'] as const).map((op) => (
+                    <label
+                      key={op}
+                      className={`flex items-center justify-center gap-2 py-3 rounded-xl border-2 font-semibold text-sm cursor-pointer transition ${
+                        step2Form.watch('operator') === op
+                          ? op === 'MTN'
+                            ? 'border-yellow-500 bg-yellow-50 text-yellow-800'
+                            : 'border-orange-500 bg-orange-50 text-orange-800'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        value={op}
+                        {...step2Form.register('operator')}
+                        className="hidden"
+                      />
+                      {op === 'MTN' ? '🟡 MTN Money' : '🟠 Orange Money'}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Numéro Mobile Money
+                </label>
+                <div className="flex items-center gap-3 border-2 border-gray-200 rounded-xl px-4 py-3 focus-within:border-purple-500 transition">
+                  <Phone size={18} className="text-gray-400 flex-shrink-0" />
+                  <span className="text-gray-500 text-sm font-mono">+237</span>
+                  <input
+                    type="tel"
+                    {...step2Form.register('phone', {
+                      required: 'Numéro requis',
+                      validate: (v) =>
+                        v.replace(/\D/g, '').length >= 9 || 'Numéro invalide (9 chiffres min)',
+                    })}
+                    placeholder="6XX XXX XXX"
+                    className="flex-1 outline-none text-gray-900 font-mono text-sm"
+                    maxLength={12}
+                  />
+                </div>
+                {step2Form.formState.errors.phone && (
+                  <p className="text-red-500 text-xs mt-1.5">{step2Form.formState.errors.phone.message}</p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={step2Form.formState.isSubmitting}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-base shadow-lg hover:shadow-xl transition disabled:opacity-70 flex items-center justify-center gap-2"
+              >
+                {step2Form.formState.isSubmitting
+                  ? <><Loader size={18} className="animate-spin" /> Initiation du paiement...</>
+                  : 'Payer 500 FCFA et devenir candidat 🎬'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStep('info')}
+                className="w-full text-sm text-gray-500 hover:text-gray-700 transition"
+              >
+                ← Retour
+              </button>
+            </form>
+          )}
+
+          {/* ─── Étape 3 : Polling ──────────────────────────────────────── */}
+          {step === 'polling' && (
+            <div className="text-center py-8 space-y-5">
+              <div className="relative mx-auto w-20 h-20">
+                <div className="w-20 h-20 border-4 border-purple-200 rounded-full" />
+                <div className="absolute inset-0 border-4 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                <Phone size={28} className="absolute inset-0 m-auto text-purple-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-lg">Confirmez sur votre téléphone</h3>
+                <p className="text-gray-600 text-sm mt-1 leading-relaxed">
+                  Vous avez reçu une notification Mobile Money.<br />
+                  Acceptez le paiement de <strong className="text-purple-700">500 FCFA</strong> pour activer votre compte.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-1 text-xs text-gray-400">
+                {[0, 150, 300].map((d) => (
+                  <div key={d} className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                ))}
+                <span className="ml-2">Vérification en cours ({pollCount}/20)</span>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Étape 4 : Succès ───────────────────────────────────────── */}
+          {step === 'success' && (
+            <div className="text-center py-8 space-y-5">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle size={44} className="text-green-500" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-2xl">Bienvenue dans le concours ! 🎉</h3>
+                <p className="text-gray-600 text-sm mt-2 leading-relaxed">
+                  Votre compte candidat est actif.<br />
+                  Uploadez maintenant votre vidéo depuis votre tableau de bord.
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/candidate/dashboard')}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-base shadow-lg hover:shadow-xl transition"
+              >
+                Accéder à mon tableau de bord →
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-lg p-8">
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2">
-            Nom de scène <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            name="stageName"
-            value={formData.stageName}
-            onChange={handleInputChange}
-            placeholder="Votre nom d'artiste"
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            required
-            minLength={3}
-          />
-        </div>
-
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2">
-            Biographie (optionnelle)
-          </label>
-          <textarea
-            name="bio"
-            value={formData.bio}
-            onChange={handleInputChange}
-            placeholder="Parlez-nous de vous et de votre talent..."
-            rows={4}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-          />
-        </div>
-
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2">
-            Numéro Mobile Money <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="tel"
-            name="phoneNumber"
-            value={formData.phoneNumber}
-            onChange={handleInputChange}
-            placeholder="+237 6XX XXX XXX (MTN/Orange)"
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            required
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            Utilisé pour le paiement de l'inscription (500 FCFA)
-          </p>
-        </div>
-
-        <div className="mb-8">
-          <label className="block text-sm font-semibold mb-2">
-            Vidéo de talent <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="file"
-            accept="video/mp4,video/webm,video/quicktime"
-            onChange={handleVideoChange}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            required
-          />
-          {videoFile && (
-            <p className="text-sm text-green-600 mt-2">
-              ✓ Vidéo sélectionnée : {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
-            </p>
-          )}
-        </div>
-
-        <button
-          type="submit"
-          disabled={uploading}
-          className="w-full py-4 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition"
-        >
-          {uploading ? (
-            <span className="flex items-center justify-center">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-              Upload en cours...
-            </span>
-          ) : (
-            'Soumettre mon inscription (500 FCFA)'
-          )}
-        </button>
-      </form>
     </div>
   );
 }

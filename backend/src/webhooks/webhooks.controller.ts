@@ -1,5 +1,19 @@
-import { Controller, Post, Body, Headers, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Body,
+  UseGuards,
+  Headers,
+  Req,
+  Logger,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { JwtAuthGuard } from '../common/guards/auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -9,37 +23,67 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Webhooks')
 @Controller('webhooks')
 export class WebhooksController {
+  private readonly logger = new Logger(WebhooksController.name);
   constructor(private webhooksService: WebhooksService) {}
 
   @Post('mesomb')
-  @ApiOperation({ summary: 'MeSomb payment webhook' })
-  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
-  handleMeSomb(@Body() payload: any, @Headers('x-mesomb-signature') signature?: string) {
-    return this.webhooksService.handleMeSombWebhook(payload, signature);
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Webhook MeSomb — callback de paiement (public)' })
+  async handleMesombWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-mesomb-signature') signature: string,
+    @Headers('x-mesomb-date') mesombDate: string, // ← LIGNE AJOUTÉE
+    @Headers('x-mesomb-nonce') mesombNonce: string, // ← LIGNE AJOUTÉE
+    @Body() payload: any,
+  ) {
+    this.logger.log(`MeSomb webhook received: ${JSON.stringify(payload)}`);
+    return this.webhooksService.processMesombWebhook(
+      payload,
+      signature,
+      mesombDate, // ← LIGNE AJOUTÉE
+      mesombNonce, // ← LIGNE AJOUTÉE
+    );
   }
 
-  @Post('stripe')
-  @ApiOperation({ summary: 'Stripe payment webhook' })
-  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
-  handleStripe(@Body() payload: any, @Headers('stripe-signature') signature?: string) {
-    return this.webhooksService.handleStripeWebhook(payload, signature);
-  }
+  // ─── Logs webhooks (Admin) ────────────────────────────────────────────────
 
   @Get('logs')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get webhook logs (Admin only)' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'Webhook logs retrieved' })
-  getWebhookLogs(
+  @ApiOperation({ summary: '[ADMIN] Lister les logs webhooks' })
+  getLogs(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('processed') processed?: string,
+    @Query('provider') provider?: string,
   ) {
-    return this.webhooksService.getWebhookLogs(
-      page ? parseInt(page) : 1,
-      limit ? parseInt(limit) : 50,
-    );
+    return this.webhooksService.getLogs({
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 50,
+      processed: processed !== undefined ? processed === 'true' : undefined,
+      provider,
+    });
+  }
+
+  @Get('logs/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "[ADMIN] Détail d'un log webhook" })
+  getLog(@Param('id') id: string) {
+    return this.webhooksService.getLog(id);
+  }
+
+  // ─── Retry (Admin) ────────────────────────────────────────────────────────
+
+  @Post(':id/retry')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "[ADMIN] Relancer le traitement d'un webhook" })
+  retryWebhook(@Param('id') id: string) {
+    return this.webhooksService.retryWebhook(id);
   }
 }
