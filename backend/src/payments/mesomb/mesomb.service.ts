@@ -105,7 +105,7 @@ export class MeSombService {
       const detectedService = this.detectOperator(phone);
 
       this.logger.log(
-        `MeSomb payment: ${params.amount} XAF → ${phone} via ${params.service}`,
+        `MeSomb payment: ${params.amount} XAF → ${phone} via ${detectedService} (demandé: ${params.service})`,
       );
 
       const response = await client.makeCollect({
