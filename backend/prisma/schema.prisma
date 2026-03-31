@@ -131,7 +131,7 @@ model CandidateRegistrationPayment {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   amount            Int           @default(500)
-  currency          String        @default("XOF")
+  currency          String        @default("XAF")
   status            PaymentStatus @default(PENDING)
   provider          PaymentProvider
 
@@ -157,7 +157,7 @@ model Vote {
   voter       User      @relation("VoterVotes", fields: [voterId], references: [id], onDelete: Cascade)
 
   amount   Int           @default(100)
-  currency String        @default("XOF")
+  currency String        @default("XAF")
   status   PaymentStatus @default(PENDING)
   provider PaymentProvider
 
@@ -186,7 +186,7 @@ model Transaction {
 
   type     String        // VOTE | REGISTRATION
   amount   Int
-  currency String        @default("XOF")
+  currency String        @default("XAF")
   status   PaymentStatus
   provider PaymentProvider
 

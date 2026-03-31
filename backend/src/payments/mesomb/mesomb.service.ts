@@ -102,6 +102,7 @@ export class MeSombService {
 
       const nonce = params.nonce || RandomGenerator.nonce();
       const phone = this.normalizePhoneNumber(params.payer);
+      const detectedService = this.detectOperator(phone);
 
       this.logger.log(
         `MeSomb payment: ${params.amount} XAF → ${phone} via ${params.service}`,
@@ -109,7 +110,7 @@ export class MeSombService {
 
       const response = await client.makeCollect({
         amount: params.amount,
-        service: params.service,
+        service: detectedService,
         payer: phone,
         nonce,
         currency: params.currency || 'XAF',
@@ -121,7 +122,12 @@ export class MeSombService {
         response.isOperationSuccess() && response.isTransactionSuccess();
       const trx = response.transaction;
 
-      this.logger.log(`MeSomb réponse: success=${success}, pk=${trx?.pk}`);
+      this.logger.log(
+	  `MeSomb réponse: success=${success}, pk=${trx?.pk}, ` +
+	  `status=${trx?.status}, message="${trx?.message}", ` +
+	  `isOperationSuccess=${response.isOperationSuccess()}, ` +
+	  `isTransactionSuccess=${response.isTransactionSuccess()}`
+	);
 
       return {
         success,
