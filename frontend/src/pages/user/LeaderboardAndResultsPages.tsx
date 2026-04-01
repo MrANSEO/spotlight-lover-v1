@@ -11,7 +11,7 @@ interface LeaderEntry {
   stageName: string;
   thumbnailUrl?: string;
   totalVotes: number;
-  totalAmount: number;
+ 
 }
 
 export function LeaderboardPage() {
@@ -76,7 +76,7 @@ export function LeaderboardPage() {
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900 truncate">{e.stageName}</p>
-                  <p className="text-sm text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} </p>
+                  
                 </div>
                 <div className="text-right">
                   <p className="text-xl font-bold text-pink-600">{e.totalVotes.toLocaleString()}</p>
