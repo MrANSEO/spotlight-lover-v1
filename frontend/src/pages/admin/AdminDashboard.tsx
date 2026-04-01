@@ -28,7 +28,7 @@ interface LeaderEntry {
   stageName: string;
   thumbnailUrl?: string;
   totalVotes: number;
-  totalAmount: number;
+  //totalAmount: number;
 }
 
 export default function AdminDashboard() {
@@ -284,7 +284,7 @@ export default function AdminDashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 text-sm truncate">{e.stageName}</p>
-                    <p className="text-xs text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} FCFA</p>
+                    
                   </div>
                   <div className="flex-shrink-0 text-right">
                     <p className="font-bold text-pink-600 text-sm">{e.totalVotes}</p>

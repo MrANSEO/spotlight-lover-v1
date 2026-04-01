@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
+import { useNavigate, Link } from 'react-router-dom';
 
 interface ProfileForm { firstName: string; lastName: string; phone: string; email: string; }
 interface PasswordForm { currentPassword: string; newPassword: string; confirmPassword: string; }
@@ -76,8 +76,28 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+      
+      
 
       <div className="px-4 -mt-6">
+      
+      {user?.role === 'USER' && (
+  <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="font-bold text-gray-900">🎬 Devenir candidat</p>
+        <p className="text-sm text-gray-500 mt-0.5">Participez au concours et gagnez des prix</p>
+      </div>
+      <Link
+        to="/become-candidate"
+        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl text-sm font-semibold hover:opacity-90 transition flex-shrink-0"
+      >
+        S'inscrire →
+      </Link>
+    </div>
+  </div>
+)}
+      
         {/* Tabs */}
         <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
           {tabs.map(({ id, icon: Icon, label }) => (
