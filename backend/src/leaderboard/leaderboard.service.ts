@@ -32,7 +32,7 @@ export class LeaderboardService {
         thumbnailUrl: e.candidate.thumbnailUrl,
         videoUrl: e.candidate.videoUrl,
         totalVotes: e.totalVotes,
-        totalAmount: e.totalAmount,
+        //totalAmount: e.totalAmount,
         lastUpdated: e.lastUpdated,
       })),
       updatedAt: new Date(),
