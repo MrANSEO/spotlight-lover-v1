@@ -3,22 +3,25 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: nodemailer.Transporter;
+  private resend: Resend;
 
   constructor(private configService: ConfigService) {
-    this.transporter = nodemailer.createTransport({
-      host: this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
-      port: parseInt(this.configService.get('SMTP_PORT', '587')),
-      secure: this.configService.get('SMTP_SECURE', 'false') === 'true',
-      auth: {
-        user: this.configService.get('SMTP_USER'),
-        pass: this.configService.get('SMTP_PASS'),
-      },
+    this.resend = new Resend(this.configService.get('RESEND_API_KEY'));
+  }
+
+  private async sendMail(options: { to: string; subject: string; html: string; text?: string }) {
+    return this.resend.emails.send({
+      from: this.from,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      text: options.text,
     });
   }
 
@@ -55,8 +58,8 @@ export class EmailService {
     const verifyUrl = `${this.frontendUrl}/verify-email?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+     
         to: email,
         subject: '✅ Confirmez votre email — SpotLightLover',
         html: this.wrap(
@@ -90,8 +93,8 @@ export class EmailService {
     const resetUrl = `${this.frontendUrl}/reset-password?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+        
         to: email,
         subject: '🔑 Réinitialisation de votre mot de passe — SpotLightLover',
         html: this.wrap(
@@ -128,8 +131,8 @@ export class EmailService {
       ? `Votre paiement de <strong>${amount} FCFA</strong> a été reçu.<br><strong>${details.quantity} vote(s)</strong> ont été attribués à <strong>${details.candidateName}</strong>.`
       : `Votre paiement d'inscription de <strong>${amount} FCFA</strong> a été reçu.<br>Votre compte candidat est maintenant <strong>actif</strong>. Vous pouvez uploader votre vidéo !`;
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+       
         to: email,
         subject,
         html: this.wrap(
@@ -150,8 +153,8 @@ export class EmailService {
 
   async sendSuspensionEmail(email: string, firstName: string, reason?: string) {
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+      
         to: email,
         subject: '⚠️ Votre compte a été suspendu — SpotLightLover',
         html: this.wrap(
@@ -193,8 +196,8 @@ export class EmailService {
     prizeAmount: number,
   ) {
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+       
         to: email,
         subject: '🥇 Tu as gagné le concours SpotLightLover !',
         html: this.wrap(
@@ -244,8 +247,8 @@ export class EmailService {
     const medal = medals[position];
     const label = labels[position];
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+      
         to: email,
         subject: `${medal} Tu termines ${label} du concours SpotLightLover !`,
         html: this.wrap(
@@ -291,8 +294,8 @@ export class EmailService {
        <td style="padding:12px;text-align:right;color:#7c3aed;font-weight:bold;">${c.votes.toLocaleString('fr-FR')} votes</td></tr>`
     ).join('');
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+       
         to: email,
         subject: '🏆 Le concours SpotLightLover est terminé — Voici les résultats !',
         html: this.wrap(
@@ -340,8 +343,8 @@ export class EmailService {
       ? `Tu termines à la <strong>${rank}ème place</strong>.`
       : 'Le classement final sera publié prochainement.';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+       
         to: email,
         subject: '🎬 Le concours SpotLightLover est terminé — Ton classement',
         html: this.wrap(
