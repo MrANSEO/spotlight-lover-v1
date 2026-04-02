@@ -63,16 +63,15 @@ export default function ProfilePage() {
     finally { setLoading(false); }
   };
 
-	 const tabs = [
+	 const tabs: { id: 'profile' | 'password' | 'danger'; icon: any; label: string }[] = [
 	  { id: 'profile', icon: User, label: 'Profil' },
-	  ...(!user?.googleId ? [{ id: 'password', icon: Lock, label: 'Mot de passe' }] : []),
+	  ...(!user?.googleId ? [{ id: 'password' as const, icon: Lock, label: 'Mot de passe' }] : []),
 	  { id: 'danger', icon: Trash2, label: 'Compte' },
-	] as const;
+	];
 	
-	// Après la définition de tabs, ajoute :
 	useEffect(() => {
 	  if (user?.googleId && tab === 'password') {
-	    setTab('profile');
+	    setTab('profile' as 'profile' | 'password' | 'danger');
 	  }
 	}, [user]);
 
