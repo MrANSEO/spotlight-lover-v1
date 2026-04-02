@@ -382,7 +382,7 @@ export default function AdminContestPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900 truncate">{e.stageName}</p>
-                  <p className="text-xs text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} FCFA</p>
+                  
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-lg font-bold text-pink-600">{e.totalVotes.toLocaleString()}</p>

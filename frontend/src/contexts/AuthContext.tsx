@@ -26,6 +26,7 @@ interface AuthUser {
   role: 'USER' | 'CANDIDATE' | 'ADMIN';
   isVerified: boolean;
   avatar?: string | null;
+  googleId?: string | null;
 }
 
 interface AuthContextType {

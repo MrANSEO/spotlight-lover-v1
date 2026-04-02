@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, UserCheck, UserX, ChevronLeft, ChevronRight, Loader, RefreshCw } from 'lucide-react';
+import { Search, UserCheck, UserX, Trash2, ChevronLeft, ChevronRight, Loader, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 
@@ -84,6 +84,21 @@ export default function AdminUsersPage() {
       setActionLoading(null);
     }
   };
+  
+  const deleteUser = async (userId: string, email: string) => {
+  if (!window.confirm(`Supprimer définitivement le compte de ${email} ? Action irréversible.`)) return;
+  setActionLoading(userId);
+  try {
+    await api.delete(`/users/${userId}`);
+    toast.success('Utilisateur supprimé.');
+    loadUsers(pagination.page);
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || 'Erreur.');
+  } finally {
+    setActionLoading(null);
+  }
+};
+  
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-5">
@@ -232,8 +247,20 @@ export default function AdminUsersPage() {
                                 : user.isActive
                                   ? <><UserX size={12} /> Désactiver</>
                                   : <><UserCheck size={12} /> Activer</>}
-                            </button>
+                            </button> 
                           )}
+                          
+                              {/* Supprimer */}
+			    {user.role !== 'ADMIN' && (
+			      <button
+				onClick={() => deleteUser(user.id, user.email)}
+				disabled={isLoading}
+				className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-semibold hover:bg-red-100 transition disabled:opacity-60 flex items-center gap-1"
+			      >
+				<Trash2 size={12} /> Supprimer
+			      </button>
+			    )}
+                          
                         </div>
                       </td>
                     </tr>

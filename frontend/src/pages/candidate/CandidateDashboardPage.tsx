@@ -54,6 +54,69 @@ const MAX_VIDEO_DURATION_S = 240;
 const MIN_VIDEO_DURATION_S = 10;
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
 
+//--------------------------------------------------------------------------------
+
+function PaymentForm({ candidateId }: { candidateId: string }) {
+  const [phone, setPhone] = useState('');
+  const [operator, setOperator] = useState<'MTN' | 'ORANGE'>('MTN');
+  const [paying, setPaying] = useState(false);
+
+  const handlePay = async () => {
+    if (!phone || phone.length < 9) {
+      toast.error('Entrez un numéro valide (ex: 677000000)');
+      return;
+    }
+    setPaying(true);
+    try {
+      await api.post('/payments/candidate-registration', {
+        candidateId,
+        phone,
+        operator,
+      });
+      toast.success('📱 Confirmez le paiement sur votre téléphone !');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Erreur de paiement.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex gap-2">
+        {(['MTN', 'ORANGE'] as const).map((op) => (
+          <button
+            key={op}
+            onClick={() => setOperator(op)}
+            className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition ${
+              operator === op
+                ? 'bg-orange-500 text-white border-orange-500'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            {op === 'MTN' ? '📱 MTN' : '🟠 Orange'}
+          </button>
+        ))}
+      </div>
+      <input
+        type="tel"
+        placeholder="Numéro Mobile Money (ex: 677000000)"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-orange-500 text-sm"
+      />
+      <button
+        onClick={handlePay}
+        disabled={paying}
+        className="w-full py-3 bg-orange-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-orange-600 transition disabled:opacity-60"
+      >
+        {paying ? <Loader size={16} className="animate-spin" /> : '💳'}
+        {paying ? 'Paiement en cours...' : 'Payer 500 FCFA'}
+      </button>
+    </div>
+  );
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function CandidateDashboardPage() {
@@ -552,22 +615,27 @@ export default function CandidateDashboardPage() {
         )}
       </div>
 
-      {/* Message si pas encore actif */}
-      {!isActive && profile.status !== 'SUSPENDED' && (
-        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5">
-          <div className="flex gap-3">
-            <AlertTriangle size={24} className="text-orange-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-bold text-orange-800 mb-1">Compte en attente</h3>
-              <p className="text-orange-700 text-sm leading-relaxed">
-                {profile.status === 'PENDING_PAYMENT'
-                  ? 'Votre paiement de 500 FCFA n\'a pas encore été confirmé. Si vous avez payé, attendez quelques minutes.'
-                  : 'Votre profil est en cours de validation par notre équipe. Vous serez notifié par email.'}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+	    {/* Message si pas encore actif */}
+	{!isActive && profile.status !== 'SUSPENDED' && (
+	  <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5">
+	    <div className="flex gap-3">
+	      <AlertTriangle size={24} className="text-orange-500 flex-shrink-0 mt-0.5" />
+	      <div className="flex-1">
+		<h3 className="font-bold text-orange-800 mb-1">Compte en attente</h3>
+		<p className="text-orange-700 text-sm leading-relaxed">
+		  {profile.status === 'PENDING_PAYMENT'
+		    ? 'Votre paiement de 500 FCFA n\'a pas encore été confirmé.'
+		    : 'Votre profil est en cours de validation par notre équipe.'}
+		</p>
+
+		{/* ✅ Bouton payer si PENDING_PAYMENT */}
+		{profile.status === 'PENDING_PAYMENT' && (
+		  <PaymentForm candidateId={profile.id} />
+		)}
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }

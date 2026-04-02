@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
@@ -20,17 +20,25 @@ export default function ProfilePage() {
     defaultValues: { firstName: user?.firstName || '', lastName: user?.lastName || '', phone: '', email: user?.email || '' },
   });
   const passwordForm = useForm<PasswordForm>();
-
-  const saveProfile = async (data: ProfileForm) => {
-    setLoading(true);
-    try {
-      await api.patch('/me', data);
-      await refreshUser();
-      toast.success('Profil mis à jour !');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Erreur.');
-    } finally { setLoading(false); }
-  };
+  
+	const saveProfile = async (data: ProfileForm) => {
+	  setLoading(true);
+	  try {
+	    await api.patch('/me', data);
+	    await refreshUser();
+	    // ← ajoute ces lignes pour recharger le formulaire
+	    const res = await api.get('/auth/me');
+	    profileForm.reset({
+	      firstName: res.data.firstName || '',
+	      lastName: res.data.lastName || '',
+	      phone: res.data.phone || '',
+	      email: res.data.email || '',
+	    });
+	    toast.success('Profil mis à jour !');
+	  } catch (err: any) {
+	    toast.error(err.response?.data?.message || 'Erreur.');
+	  } finally { setLoading(false); }
+	};
 
   const changePassword = async (data: PasswordForm) => {
     if (data.newPassword !== data.confirmPassword) { toast.error('Les mots de passe ne correspondent pas.'); return; }
@@ -55,11 +63,18 @@ export default function ProfilePage() {
     finally { setLoading(false); }
   };
 
-  const tabs = [
-    { id: 'profile', icon: User, label: 'Profil' },
-    { id: 'password', icon: Lock, label: 'Mot de passe' },
-    { id: 'danger', icon: Trash2, label: 'Compte' },
-  ] as const;
+	 const tabs = [
+	  { id: 'profile', icon: User, label: 'Profil' },
+	  ...(!user?.googleId ? [{ id: 'password', icon: Lock, label: 'Mot de passe' }] : []),
+	  { id: 'danger', icon: Trash2, label: 'Compte' },
+	] as const;
+	
+	// Après la définition de tabs, ajoute :
+	useEffect(() => {
+	  if (user?.googleId && tab === 'password') {
+	    setTab('profile');
+	  }
+	}, [user]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
