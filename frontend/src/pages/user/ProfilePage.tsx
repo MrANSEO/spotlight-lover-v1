@@ -21,13 +21,29 @@ export default function ProfilePage() {
   });
   const passwordForm = useForm<PasswordForm>();
   
+	  // Ajoute après const passwordForm = useForm<PasswordForm>();
+	useEffect(() => {
+	  const loadProfile = async () => {
+	    try {
+	      const res = await api.get('/me');
+	      profileForm.reset({
+		firstName: res.data.firstName || '',
+		lastName: res.data.lastName || '',
+		phone: res.data.phone || '',
+		email: res.data.email || '',
+	      });
+	    } catch {}
+	  };
+	  loadProfile();
+	}, []);
+  
 	const saveProfile = async (data: ProfileForm) => {
 	  setLoading(true);
 	  try {
 	    await api.patch('/me', data);
 	    await refreshUser();
 	    // ← ajoute ces lignes pour recharger le formulaire
-	    const res = await api.get('/auth/me');
+	    const res = await api.get('/me');
 	    profileForm.reset({
 	      firstName: res.data.firstName || '',
 	      lastName: res.data.lastName || '',

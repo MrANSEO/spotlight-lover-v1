@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Patch,
-  Delete,
-  Body,
-  UseGuards,
-  HttpCode,
-} from '@nestjs/common';
+import { Controller, Get, Patch, Delete, Body, UseGuards, HttpCode, BadRequestException } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -19,6 +11,7 @@ import { PrismaService } from '../prisma.service';
 import { JwtAuthGuard } from '../common/guards/auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as bcrypt from 'bcrypt';
+
 
 class UpdateMyProfileDto {
   @ApiProperty({ required: false })
@@ -107,13 +100,13 @@ export class MeController {
 
     // Changement de mot de passe
     if (dto.newPassword) {
-      if (!dto.currentPassword) {
-        throw new Error('Le mot de passe actuel est requis pour changer le mot de passe.');
-      }
-      const valid = await bcrypt.compare(dto.currentPassword, existing!.password);
-      if (!valid) {
-        throw new Error('Mot de passe actuel incorrect.');
-      }
+     if (!dto.currentPassword) {
+	  throw new BadRequestException('Le mot de passe actuel est requis.');
+	}
+	const valid = await bcrypt.compare(dto.currentPassword, existing!.password);
+	if (!valid) {
+	  throw new BadRequestException('Mot de passe actuel incorrect.');
+	}
       updateData.password = await bcrypt.hash(dto.newPassword, 12);
     }
 
