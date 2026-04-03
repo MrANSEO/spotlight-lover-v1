@@ -81,15 +81,10 @@ export default function ProfilePage() {
 
 	 const tabs: { id: 'profile' | 'password' | 'danger'; icon: any; label: string }[] = [
 	  { id: 'profile', icon: User, label: 'Profil' },
-	  ...(!user?.googleId ? [{ id: 'password' as const, icon: Lock, label: 'Mot de passe' }] : []),
+	  { id: 'password', icon: Lock, label: user?.googleId ? 'Définir MDP' : 'Mot de passe' },
 	  { id: 'danger', icon: Trash2, label: 'Compte' },
 	];
 	
-	useEffect(() => {
-	  if (user?.googleId && tab === 'password') {
-	    setTab('profile' as 'profile' | 'password' | 'danger');
-	  }
-	}, [user]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -176,24 +171,48 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* Password Tab */}
-        {tab === 'password' && (
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <h2 className="font-bold text-gray-900 mb-4">Changer le mot de passe</h2>
-            <form onSubmit={passwordForm.handleSubmit(changePassword)} className="space-y-4">
-              {['currentPassword', 'newPassword', 'confirmPassword'].map((field, i) => (
-                <div key={field}>
-                  <label className="block text-sm text-gray-600 mb-1">{['Mot de passe actuel', 'Nouveau mot de passe', 'Confirmer le nouveau'][i]}</label>
-                  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••" {...passwordForm.register(field as any, { required: true, minLength: field !== 'currentPassword' ? 8 : 1 })} />
-                </div>
-              ))}
-              <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
-                {loading && <Loader2 size={16} className="animate-spin" />}
-                Changer le mot de passe
-              </button>
-            </form>
-          </div>
-        )}
+      {/* Password Tab */}
+	{tab === 'password' && (
+	  <div className="bg-white rounded-2xl shadow-sm p-5">
+	    <h2 className="font-bold text-gray-900 mb-4">
+	      {user?.googleId ? '🔐 Définir un mot de passe' : 'Changer le mot de passe'}
+	    </h2>
+
+	    {/* Info pour users Google */}
+	    {user?.googleId && (
+	      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
+		<p className="text-blue-700 text-sm">
+		  Votre compte utilise Google. Définissez un mot de passe pour pouvoir vous connecter aussi par email.
+		</p>
+	      </div>
+	    )}
+
+	    <form onSubmit={passwordForm.handleSubmit(changePassword)} className="space-y-4">
+	      {/* Champ mot de passe actuel — seulement si pas Google */}
+	      {!user?.googleId && (
+		<div>
+		  <label className="block text-sm text-gray-600 mb-1">Mot de passe actuel</label>
+		  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		</div>
+	      )}
+	      <div>
+		<label className="block text-sm text-gray-600 mb-1">Nouveau mot de passe</label>
+		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		  {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+	      </div>
+	      <div>
+		<label className="block text-sm text-gray-600 mb-1">Confirmer le mot de passe</label>
+		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		  {...passwordForm.register('confirmPassword', { required: true })} />
+	      </div>
+	      <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+		{loading && <Loader2 size={16} className="animate-spin" />}
+		{user?.googleId ? 'Définir mon mot de passe' : 'Changer le mot de passe'}
+	      </button>
+	    </form>
+	  </div>
+	)}
 
         {/* Danger Tab */}
         {tab === 'danger' && (
