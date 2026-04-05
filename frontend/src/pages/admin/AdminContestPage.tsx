@@ -129,6 +129,49 @@ export default function AdminContestPage() {
       toast.error(err.response?.data?.message || 'Erreur lors de la mise à jour.');
     }
   };
+  
+  //----------------------------startNewSeason--------------------------------------
+  
+  const startNewSeason = async () => {
+  if (!contest) return;
+  
+  const confirmDelete = window.confirm(
+    '⚠️ ATTENTION — Nouvelle saison\n\n' +
+    'Cette action va :\n' +
+    '• Archiver toutes les données de cette saison\n' +
+    '• Supprimer toutes les vidéos des candidats\n' +
+    '• Remettre tous les candidats en attente de paiement\n' +
+    '• Vider tous les votes\n\n' +
+    'Voulez-vous SUPPRIMER les vidéos Cloudinary ? (Recommandé pour éviter les surcoûts)'
+  );
+  
+  const deleteVideos = confirmDelete;
+  
+  const finalConfirm = window.confirm(
+    `✅ Confirmer le démarrage de la nouvelle saison ?\n\n` +
+    `Saison archivée : "${contest.title}"\n` +
+    `Vidéos : ${deleteVideos ? 'SUPPRIMÉES' : 'conservées'}\n\n` +
+    `Cette action est IRRÉVERSIBLE.`
+  );
+  
+  if (!finalConfirm) return;
+  
+  setActionLoading('new-season');
+  try {
+    const res = await api.post('/contest/new-season', {
+      contestId: contest.id,
+      deleteVideos,
+    });
+    toast.success('✅ Nouvelle saison démarrée ! Données archivées.');
+    await loadData();
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || 'Erreur.');
+  } finally {
+    setActionLoading(null);
+  }
+};
+  
+  //------------------------------------------------------------------
 
   const changeStatus = async (newStatus: string) => {
     const confirmMessages: Record<string, string> = {
@@ -359,6 +402,19 @@ export default function AdminContestPage() {
           </form>
         </div>
       )}
+      
+	      {contest.status === 'RESULTS_PUBLISHED' && (
+	  <button
+	    onClick={startNewSeason}
+	    disabled={actionLoading === 'new-season'}
+	    className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700 transition disabled:opacity-60"
+	  >
+	    {actionLoading === 'new-season'
+	      ? <Loader size={16} className="animate-spin" />
+	      : '🔄'}
+	    Démarrer nouvelle saison
+	  </button>
+	)}
 
       {/* ─── Classement ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">

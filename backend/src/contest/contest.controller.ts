@@ -14,6 +14,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Logger,
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -97,6 +98,7 @@ class UpdateContestStatusDto {
 @ApiTags('Contest')
 @Controller('contest')
 export class ContestController {
+ private readonly logger = new Logger(ContestController.name);
   constructor(private prisma: PrismaService) {}
 
   // ─── PUBLIC : Résultats officiels ─────────────────────────────────────────
@@ -252,4 +254,101 @@ export class ContestController {
       data: updateData,
     });
   }
+  // ─── ADMIN : Nouvelle saison ──────────────────────────────────────────────
+  @Post('new-season')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[ADMIN] Démarrer une nouvelle saison' })
+  async startNewSeason(@Body() body: { contestId: string; deleteVideos: boolean }) {
+    const contest = await this.prisma.contest.findUnique({ where: { id: body.contestId } });
+    if (!contest) throw new BadRequestException('Concours introuvable.');
+    if (contest.status !== ContestStatus.RESULTS_PUBLISHED) {
+      throw new BadRequestException('Publiez les résultats avant de démarrer une nouvelle saison.');
+    }
+
+    const [totalVotes, totalRevenueAgg, totalCandidates] = await Promise.all([
+      this.prisma.vote.count({ where: { status: 'COMPLETED' } }),
+      this.prisma.vote.aggregate({ where: { status: 'COMPLETED' }, _sum: { amount: true } }),
+      this.prisma.candidate.count(),
+    ]);
+
+    const totalVoters = await this.prisma.vote.groupBy({
+      by: ['voterId'], where: { status: 'COMPLETED' }
+    }).then(r => r.length);
+
+    const top3Entries = await this.prisma.leaderboardEntry.findMany({
+      orderBy: { totalVotes: 'desc' }, take: 3,
+      include: { candidate: { select: { stageName: true } } },
+    });
+    const top3 = top3Entries.map((e, i) => ({
+      rank: i + 1, stageName: e.candidate.stageName, totalVotes: e.totalVotes,
+    }));
+
+    const candidates = await this.prisma.candidate.findMany({
+      include: {
+        leaderboardEntry: { select: { totalVotes: true, totalAmount: true, rank: true } },
+        user: { select: { email: true, firstName: true, lastName: true } },
+      },
+    });
+    const candidatesSnapshot = candidates.map(c => ({
+      stageName: c.stageName, bio: c.bio, status: c.status,
+      email: c.user.email, firstName: c.user.firstName, lastName: c.user.lastName,
+      totalVotes: c.leaderboardEntry?.totalVotes || 0,
+      totalAmount: c.leaderboardEntry?.totalAmount || 0,
+      rank: c.leaderboardEntry?.rank || null,
+    }));
+
+    await this.prisma.seasonArchive.create({
+      data: {
+        contestId: contest.id, title: contest.title,
+        startDate: contest.startDate, endDate: contest.endDate,
+        prizeAmount: contest.prizeAmount, prizeDescription: contest.prizeDescription,
+        resultsPublishedAt: contest.resultsPublishedAt,
+        totalVotes, totalRevenue: totalRevenueAgg._sum.amount || 0,
+        totalCandidates, totalVoters, top3, candidatesSnapshot,
+      },
+    });
+
+    if (body.deleteVideos) {
+      const { v2: cloudinary } = await import('cloudinary');
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      });
+      const candidatesWithVideos = await this.prisma.candidate.findMany({
+        where: { videoPublicId: { not: null } },
+        select: { id: true, videoPublicId: true },
+      });
+      for (const c of candidatesWithVideos) {
+        try {
+          await cloudinary.uploader.destroy(c.videoPublicId!, { resource_type: 'video' });
+        } catch (e) {
+          this.logger.warn(`Failed to delete video ${c.videoPublicId}`);
+        }
+      }
+    }
+
+    await this.prisma.candidate.updateMany({
+      data: {
+        status: 'PENDING_PAYMENT', videoUrl: null,
+        thumbnailUrl: null, videoPublicId: null,
+        rejectionReason: null, moderatedAt: null, moderatedBy: null,
+      },
+    });
+    await this.prisma.user.updateMany({
+      where: { role: 'CANDIDATE' }, data: { role: 'USER' },
+    });
+    await this.prisma.leaderboardEntry.deleteMany({});
+    await this.prisma.vote.deleteMany({});
+    await this.prisma.candidateRegistrationPayment.deleteMany({});
+
+    return {
+      message: '✅ Nouvelle saison démarrée ! Données archivées.',
+      archived: { title: contest.title, totalVotes, totalRevenue: totalRevenueAgg._sum.amount || 0, totalCandidates, top3 },
+    };
+  }
+
 }

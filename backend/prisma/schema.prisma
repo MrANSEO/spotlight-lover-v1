@@ -328,3 +328,33 @@ model IpBlacklist {
   @@index([ipAddress])
   @@index([expiresAt])
 }
+//--------------------------------------------------------SeasonArchive----------------------------------
+model SeasonArchive {
+  id        String @id @default(uuid())
+  contestId String
+  
+  // Infos du concours
+  title          String
+  startDate      DateTime?
+  endDate        DateTime?
+  prizeAmount    Int?
+  prizeDescription String?
+  resultsPublishedAt DateTime?
+  
+  // Stats globales
+  totalVotes       Int @default(0)
+  totalRevenue     Int @default(0)
+  totalCandidates  Int @default(0)
+  totalVoters      Int @default(0)
+  
+  // Top 3 archivé (JSON)
+  top3 Json?
+  
+  // Tous les candidats avec leurs stats (sans vidéos)
+  candidatesSnapshot Json?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([contestId])
+  @@index([createdAt])
+}
