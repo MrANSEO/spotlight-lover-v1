@@ -43,6 +43,7 @@ export default function VideoFeedPage() {
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [contest, setContest] = useState<any>(null);
 
   // ─── Chargement des candidats ─────────────────────────────────────────────
 
@@ -68,6 +69,10 @@ export default function VideoFeedPage() {
       setLoading(false);
     }
   };
+  
+   useEffect(() => {
+	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
+	}, []);
 
   // ─── Navigation entre vidéos ──────────────────────────────────────────────
 
@@ -247,6 +252,25 @@ export default function VideoFeedPage() {
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
+    
+    {/* Banner concours */}
+{contest && contest.status === 'OPEN' && (
+  <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
+    <div className="flex items-center gap-2">
+      <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+      <span className="text-sm font-bold">{contest.title}</span>
+    </div>
+    {contest.prizeAmount && (
+      <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
+    )}
+  </div>
+)}
+{contest && contest.status === 'CLOSED' && (
+  <div className="absolute top-0 left-0 right-0 z-10 bg-red-500/80 backdrop-blur-sm text-white px-4 py-2 text-center">
+    <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
+  </div>
+)}
+    
       {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
       <div className="absolute inset-0">
         {current.videoUrl ? (

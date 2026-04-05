@@ -154,6 +154,23 @@ export class ContestController {
       })),
     };
   }
+  
+    // ─── PUBLIC : Infos concours actif ────────────────────────────────────────
+	@Get('current')
+	@ApiOperation({ summary: 'Infos concours actif (public)' })
+	async getCurrentContest() {
+	  const contest = await this.prisma.contest.findFirst({
+	    where: { status: { in: ['OPEN', 'CLOSED', 'RESULTS_PUBLISHED'] } },
+	    orderBy: { createdAt: 'desc' },
+	    select: {
+	      id: true, title: true, status: true,
+	      startDate: true, endDate: true,
+	      prizeAmount: true, prizeDescription: true,
+	      resultsPublishedAt: true,
+	    },
+	  });
+	  return contest;
+	}
 
   // ─── ADMIN : Récupérer le concours le plus récent ─────────────────────────
 
@@ -254,6 +271,9 @@ export class ContestController {
       data: updateData,
     });
   }
+  
+
+  
   // ─── ADMIN : Nouvelle saison ──────────────────────────────────────────────
   @Post('new-season')
   @UseGuards(JwtAuthGuard, RolesGuard)

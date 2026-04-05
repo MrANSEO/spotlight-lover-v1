@@ -12,6 +12,12 @@ interface TopCandidate {
 
 export default function HomePage() {
   const [topCandidates, setTopCandidates] = useState<TopCandidate[]>([]);
+  
+  const [contest, setContest] = useState<any>(null);
+
+	useEffect(() => {
+	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
+	}, []);
 
   useEffect(() => {
     api.get('/leaderboard?limit=3').then((r) => {
@@ -38,6 +44,20 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+      
+      {/* Banner concours */}
+	{contest && (
+	  <div className={`px-4 py-3 text-center text-white text-sm font-semibold ${
+	    contest.status === 'OPEN' ? 'bg-green-600' :
+	    contest.status === 'CLOSED' ? 'bg-red-600' :
+	    contest.status === 'RESULTS_PUBLISHED' ? 'bg-yellow-500' : 'bg-gray-600'
+	  }`}>
+	    {contest.status === 'OPEN' && `🟢 ${contest.title} en cours — Prix : ${contest.prizeAmount?.toLocaleString('fr-FR')} FCFA`}
+	    {contest.status === 'CLOSED' && `🔴 ${contest.title} terminé — Résultats à venir`}
+	    {contest.status === 'RESULTS_PUBLISHED' && `🏆 Résultats de ${contest.title} disponibles !`}
+	  </div>
+	)}
+      
 
       {/* How it works */}
       <section className="px-4 py-16 bg-white">

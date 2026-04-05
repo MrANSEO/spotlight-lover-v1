@@ -38,7 +38,7 @@ export function LeaderboardPage() {
     try {
       const [leaderRes, contestRes] = await Promise.all([
         api.get('/leaderboard'),
-        api.get('/contest').catch(() => ({ data: null })),
+        api.get('/contest/current').catch(() => ({ data: null })),
       ]);
       setEntries(leaderRes.data.entries || []);
       setContest(contestRes.data);
