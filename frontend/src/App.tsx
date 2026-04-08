@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import AdminMaintenancePage from './pages/admin/AdminMaintenancePage';
 import GoogleCallbackPage from './pages/auth/GoogleCallbackPage';
+import IOSInstallBanner from './components/IOSInstallBanner';
 // ─── Layouts ─────────────────────────────────────────────────────────────────
 import PublicLayout from './components/common/PublicLayout';
 import PrivateLayout from './components/common/PrivateLayout';
@@ -179,6 +180,7 @@ function App() {
           {/* Catch all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <IOSInstallBanner />
       </BrowserRouter>
     </AuthProvider>
   );
