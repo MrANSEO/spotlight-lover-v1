@@ -25,6 +25,7 @@ import { EmailService } from '../mails/email.service';
 import * as bcrypt from 'bcrypt';
 import * as speakeasy from 'speakeasy';
 import * as qrcode from 'qrcode';
+import { ReferralService } from '../referral/referral.service';
 
 @Injectable()
 export class AuthService {
@@ -33,63 +34,69 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+     private referralService: ReferralService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // INSCRIPTION (inchangé)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async register(registerDto: RegisterDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: registerDto.email },
-    });
+async register(registerDto: RegisterDto) {
+  const existingUser = await this.prisma.user.findUnique({
+    where: { email: registerDto.email },
+  });
 
-    if (existingUser) {
-      throw new ConflictException('Cet email est déjà utilisé.');
-    }
-
-    const bcryptRounds = parseInt(this.configService.get('BCRYPT_ROUNDS') || '12');
-    const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: registerDto.email,
-        password: hashedPassword,
-        firstName: registerDto.firstName,
-        lastName: registerDto.lastName,
-        phone: registerDto.phone,
-        isVerified: false,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        isVerified: true,
-        createdAt: true,
-      },
-    });
-
-    const verificationToken = await this.generateEmailVerificationToken(user.id, user.email);
-    this.emailService.sendVerificationEmail(
-      user.email,
-      verificationToken,
-      user.firstName ?? undefined,
-    ).catch((err) => {
-      console.warn(`Email non envoyé à ${user.email}:`, err.message);
-    });
-
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    await this.storeHashedRefreshToken(user.id, tokens.refreshToken);
-
-    return {
-      user,
-      ...tokens,
-      requiresEmailVerification: true,
-      message: 'Inscription réussie ! Un email de vérification a été envoyé.',
-    };
+  if (existingUser) {
+    throw new ConflictException('Cet email est déjà utilisé.');
   }
+
+  const bcryptRounds = parseInt(this.configService.get('BCRYPT_ROUNDS') || '12');
+  const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
+
+  const user = await this.prisma.user.create({
+    data: {
+      email: registerDto.email,
+      password: hashedPassword,
+      firstName: registerDto.firstName,
+      lastName: registerDto.lastName,
+      phone: registerDto.phone,
+      isVerified: false,
+    },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      isVerified: true,
+      createdAt: true,
+    },
+  });
+
+  // ✅ Traitement parrainage APRÈS création
+  if (registerDto.referralCode) {
+    await this.referralService.processReferral(user.id, registerDto.referralCode);
+  }
+
+  const verificationToken = await this.generateEmailVerificationToken(user.id, user.email);
+  this.emailService.sendVerificationEmail(
+    user.email,
+    verificationToken,
+    user.firstName ?? undefined,
+  ).catch((err) => {
+    console.warn(`Email non envoyé à ${user.email}:`, err.message);
+  });
+
+  const tokens = await this.generateTokens(user.id, user.email, user.role);
+  await this.storeHashedRefreshToken(user.id, tokens.refreshToken);
+
+  return {
+    user,
+    ...tokens,
+    requiresEmailVerification: true,
+    message: 'Inscription réussie ! Un email de vérification a été envoyé.',
+  };
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CONNEXION (inchangé)

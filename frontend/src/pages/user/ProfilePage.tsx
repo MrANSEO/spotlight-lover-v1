@@ -5,6 +5,7 @@ import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { useNavigate, Link } from 'react-router-dom';
+import { Gift, Copy, ExternalLink } from 'lucide-react';
 
 interface ProfileForm { firstName: string; lastName: string; phone: string; email: string; }
 interface PasswordForm { currentPassword: string; newPassword: string; confirmPassword: string; }
@@ -85,6 +86,13 @@ export default function ProfilePage() {
 	  { id: 'danger', icon: Trash2, label: 'Compte' },
 	];
 	
+	const [referralStats, setReferralStats] = useState<any>(null);
+
+	// Ajoute ce useEffect :
+	useEffect(() => {
+	  api.get('/referral/stats').then(r => setReferralStats(r.data)).catch(() => {});
+	}, []);
+	
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -119,6 +127,61 @@ export default function ProfilePage() {
       >
         S'inscrire →
       </Link>
+    </div>
+  </div>
+)}
+
+{/* ─── Section Parrainage ─── */}
+{referralStats && (
+  <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+    <div className="flex items-center gap-2 mb-3">
+      <Gift size={18} className="text-purple-600" />
+      <p className="font-bold text-gray-900">Parrainage</p>
+      <span className="ml-auto px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+        💰 {referralStats.walletBalance} FCFA
+      </span>
+    </div>
+
+    <p className="text-xs text-gray-500 mb-3">
+      Invitez vos amis et gagnez <strong>50 FCFA</strong> par inscription !
+    </p>
+
+    {/* Lien de parrainage */}
+    <div className="bg-gray-50 rounded-xl p-3 flex items-center gap-2 mb-3">
+      <p className="flex-1 text-xs text-gray-700 truncate font-mono">
+        {referralStats.referralLink}
+      </p>
+      <button
+        onClick={() => {
+          navigator.clipboard.writeText(referralStats.referralLink);
+          toast.success('Lien copié !');
+        }}
+        className="p-2 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition flex-shrink-0"
+      >
+        <Copy size={14} />
+      </button>
+    </div>
+
+    {/* Bouton WhatsApp */}
+    <a
+      href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! ${referralStats.referralLink}`)}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition mb-3"
+    >
+      <ExternalLink size={14} /> Partager sur WhatsApp
+    </a>
+
+    {/* Stats */}
+    <div className="grid grid-cols-2 gap-2 text-center">
+      <div className="bg-purple-50 rounded-xl p-2">
+        <p className="text-lg font-bold text-purple-700">{referralStats.totalReferrals}</p>
+        <p className="text-xs text-gray-500">Amis invités</p>
+      </div>
+      <div className="bg-green-50 rounded-xl p-2">
+        <p className="text-lg font-bold text-green-700">{referralStats.totalEarned} FCFA</p>
+        <p className="text-xs text-gray-500">Crédits gagnés</p>
+      </div>
     </div>
   </div>
 )}

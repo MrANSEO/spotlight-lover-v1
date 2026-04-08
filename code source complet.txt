@@ -1,92 +1,3 @@
-import { PrismaClient } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
-
-const prisma = new PrismaClient();
-
-async function main() {
-  console.log('🌱 Seeding database...');
-
-  // ─── Admin par défaut (inchangé) ─────────────────────────────────────────
-
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@spotlightlover.com';
-  const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@SpotLight2025!';
-
-  const existingAdmin = await prisma.user.findUnique({
-    where: { email: adminEmail },
-  });
-
-  if (!existingAdmin) {
-    const hashed = await bcrypt.hash(adminPassword, 12);
-    await prisma.user.create({
-      data: {
-        email: adminEmail,
-        password: hashed,
-        firstName: 'Admin',
-        lastName: 'SpotLightLover',
-        role: 'ADMIN',
-        isActive: true,
-        isVerified: true,
-      },
-    });
-    console.log(`✅ Admin créé: ${adminEmail}`);
-    console.log(`🔑 Mot de passe: ${adminPassword}`);
-    console.log(
-      '⚠️  CHANGEZ le mot de passe admin après la première connexion !',
-    );
-  } else {
-    console.log(`ℹ️  Admin déjà existant: ${adminEmail}`);
-  }
-
-  // ─── Premier concours en DRAFT (inchangé) ────────────────────────────────
-
-  const existingContest = await prisma.contest.findFirst();
-  if (!existingContest) {
-    await prisma.contest.create({
-      data: {
-        title: 'SpotLightLover — Saison 1',
-        status: 'DRAFT',
-        prizeAmount: 50000,
-        prizeDescription: '50 000 FCFA + Trophée SpotLightLover',
-      },
-    });
-    console.log('✅ Premier concours créé (DRAFT)');
-  }
-
-  // ─── SystemSettings par défaut ✅ NOUVEAU ────────────────────────────────
-  // upsert = crée si absent, ne modifie pas si déjà là (valeur personnalisée conservée)
-
-  const defaults = [
-    { key: 'maintenanceMode', value: 'false' },
-    {
-      key: 'maintenanceMessage',
-      value:
-        'La plateforme est en maintenance. Revenez dans quelques instants.',
-    },
-    { key: 'prizePoolPercent', value: '30' }, // 30% des revenus reversés au 1er
-    { key: 'registrationFee', value: '500' }, // FCFA
-    { key: 'votePrice', value: '100' }, // FCFA
-  ];
-
-  for (const s of defaults) {
-    await prisma.systemSetting.upsert({
-      where: { key: s.key },
-      create: s,
-      update: {}, // Ne pas écraser une valeur déjà personnalisée
-    });
-  }
-  console.log(`✅ ${defaults.length} paramètres système initialisés`);
-
-  console.log('✅ Seed terminé !');
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
-
-
 // schema.prisma - SpotLightLover
 // Mis à jour avec modèle Contest et corrections
 
@@ -220,7 +131,7 @@ model CandidateRegistrationPayment {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   amount            Int           @default(500)
-  currency          String        @default("XOF")
+  currency          String        @default("XAF")
   status            PaymentStatus @default(PENDING)
   provider          PaymentProvider
 
@@ -246,7 +157,7 @@ model Vote {
   voter       User      @relation("VoterVotes", fields: [voterId], references: [id], onDelete: Cascade)
 
   amount   Int           @default(100)
-  currency String        @default("XOF")
+  currency String        @default("XAF")
   status   PaymentStatus @default(PENDING)
   provider PaymentProvider
 
@@ -275,7 +186,7 @@ model Transaction {
 
   type     String        // VOTE | REGISTRATION
   amount   Int
-  currency String        @default("XOF")
+  currency String        @default("XAF")
   status   PaymentStatus
   provider PaymentProvider
 
@@ -417,91 +328,125 @@ model IpBlacklist {
   @@index([ipAddress])
   @@index([expiresAt])
 }
-
-import { Controller, Get, Query, UseGuards, Header } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-  ApiResponse,
-  ApiQuery,
-} from '@nestjs/swagger';
-import { AnalyticsService } from './analytics.service';
-import { JwtAuthGuard } from '../common/guards/auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
-
-@ApiTags('Analytics')
-@Controller('analytics')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN)
-@ApiBearerAuth()
-export class AnalyticsController {
-  constructor(private analyticsService: AnalyticsService) {}
-
-  @Get('dashboard')
-  @ApiOperation({ summary: 'Get dashboard statistics (Admin only)' })
-  @ApiResponse({ status: 200, description: 'Dashboard stats retrieved' })
-  getDashboardStats() {
-    return this.analyticsService.getDashboardStats();
-  }
-
-  @Get('revenue')
-  @ApiOperation({ summary: 'Get revenue by day (Admin only)' })
-  @ApiQuery({ name: 'days', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'Revenue data retrieved' })
-  getRevenueByDay(@Query('days') days?: string) {
-    return this.analyticsService.getRevenueByDay(days ? parseInt(days) : 30);
-  }
-
-  @Get('votes')
-  @ApiOperation({ summary: 'Get votes by candidate (Admin only)' })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'Vote statistics retrieved' })
-  getVotesByCandidate(@Query('limit') limit?: string) {
-    return this.analyticsService.getVotesByCandidate(
-      limit ? parseInt(limit) : 10,
-    );
-  }
-
-  @Get('payments')
-  @ApiOperation({ summary: 'Get payment statistics (Admin only)' })
-  @ApiResponse({ status: 200, description: 'Payment stats retrieved' })
-  getPaymentStats() {
-    return this.analyticsService.getPaymentStats();
-  }
-
-  @Get('candidates')
-  @ApiOperation({ summary: 'Get candidate statistics (Admin only)' })
-  @ApiResponse({ status: 200, description: 'Candidate stats retrieved' })
-  getCandidateStats() {
-    return this.analyticsService.getCandidateStats();
-  }
-
-  @Get('users/growth')
-  @ApiOperation({ summary: 'Get user growth statistics (Admin only)' })
-  @ApiQuery({ name: 'days', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'User growth data retrieved' })
-  getUserGrowth(@Query('days') days?: string) {
-    return this.analyticsService.getUserGrowth(days ? parseInt(days) : 30);
-  }
-
-  @Get('export')
-  @ApiOperation({ summary: 'Export data to CSV (Admin only)' })
-  @ApiQuery({
-    name: 'type',
-    enum: ['users', 'candidates', 'votes', 'transactions'],
-  })
-  @ApiResponse({ status: 200, description: 'CSV data exported' })
-  @Header('Content-Type', 'text/csv')
-  @Header('Content-Disposition', 'attachment; filename="export.csv"')
-  async exportData(
-    @Query('type') type: 'users' | 'candidates' | 'votes' | 'transactions',
-  ) {
-    return this.analyticsService.exportDataToCsv(type);
-  }
+//--------------------------------------------------------SeasonArchive----------------------------------
+model SeasonArchive {
+  id        String @id @default(uuid())
+  contestId String
+  
+  // Infos du concours
+  title          String
+  startDate      DateTime?
+  endDate        DateTime?
+  prizeAmount    Int?
+  prizeDescription String?
+  resultsPublishedAt DateTime?
+  
+  // Stats globales
+  totalVotes       Int @default(0)
+  totalRevenue     Int @default(0)
+  totalCandidates  Int @default(0)
+  totalVoters      Int @default(0)
+  
+  // Top 3 archivé (JSON)
+  top3 Json?
+  
+  // Tous les candidats avec leurs stats (sans vidéos)
+  candidatesSnapshot Json?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([contestId])
+  @@index([createdAt])
 }
+
+
+import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('🌱 Seeding database...');
+
+  // ─── Admin par défaut (inchangé) ─────────────────────────────────────────
+
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@spotlightlover.com';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@SpotLight2025!';
+
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+  });
+
+  if (!existingAdmin) {
+    const hashed = await bcrypt.hash(adminPassword, 12);
+    await prisma.user.create({
+      data: {
+        email: adminEmail,
+        password: hashed,
+        firstName: 'Admin',
+        lastName: 'SpotLightLover',
+        role: 'ADMIN',
+        isActive: true,
+        isVerified: true,
+      },
+    });
+    console.log(`✅ Admin créé: ${adminEmail}`);
+    console.log(`🔑 Mot de passe: ${adminPassword}`);
+    console.log(
+      '⚠️  CHANGEZ le mot de passe admin après la première connexion !',
+    );
+  } else {
+    console.log(`ℹ️  Admin déjà existant: ${adminEmail}`);
+  }
+
+  // ─── Premier concours en DRAFT (inchangé) ────────────────────────────────
+
+  const existingContest = await prisma.contest.findFirst();
+  if (!existingContest) {
+    await prisma.contest.create({
+      data: {
+        title: 'SpotLightLover — Saison 1',
+        status: 'DRAFT',
+        prizeAmount: 50000,
+        prizeDescription: '50 000 FCFA + Trophée SpotLightLover',
+      },
+    });
+    console.log('✅ Premier concours créé (DRAFT)');
+  }
+
+  // ─── SystemSettings par défaut ✅ NOUVEAU ────────────────────────────────
+  // upsert = crée si absent, ne modifie pas si déjà là (valeur personnalisée conservée)
+
+  const defaults = [
+    { key: 'maintenanceMode', value: 'false' },
+    {
+      key: 'maintenanceMessage',
+      value:
+        'La plateforme est en maintenance. Revenez dans quelques instants.',
+    },
+    { key: 'prizePoolPercent', value: '30' }, // 30% des revenus reversés au 1er
+    { key: 'registrationFee', value: '500' }, // FCFA
+    { key: 'votePrice', value: '100' }, // FCFA
+  ];
+
+  for (const s of defaults) {
+    await prisma.systemSetting.upsert({
+      where: { key: s.key },
+      create: s,
+      update: {}, // Ne pas écraser une valeur déjà personnalisée
+    });
+  }
+  console.log(`✅ ${defaults.length} paramètres système initialisés`);
+
+  console.log('✅ Seed terminé !');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());
 
 
 import { Module } from '@nestjs/common';
@@ -960,6 +905,10 @@ export class RegisterDto {
   @ApiProperty({ example: 'jean@example.com' })
   @IsEmail({}, { message: 'Email invalide.' })
   email: string;
+  
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 
   @ApiProperty({ example: 'MonMotDePasse@123' })
   @IsString()
@@ -1004,6 +953,8 @@ export class LoginDto {
   twoFactorCode?: string;
 }
 
+
+
 // ✅ NOUVEAU
 export class ForgotPasswordDto {
   @ApiProperty({ example: 'jean@example.com' })
@@ -1041,6 +992,7 @@ export class RefreshTokenDto {
   @IsString()
   refreshToken: string;
 }
+
 
 // src/auth/strategies/google.strategy.ts — NOUVEAU FICHIER
 // À créer dans : backend/src/auth/strategies/google.strategy.ts
@@ -1148,7 +1100,6 @@ export class JwtRefreshStrategy extends PassportStrategy(
     };
   }
 }
-
 
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -1415,7 +1366,7 @@ import { PrismaService } from '../prisma.service';
 import { EmailModule } from '../mails/email.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule],
+  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule,ReferralModule],
   controllers: [AuthController],
   providers: [
     AuthService,
@@ -1457,6 +1408,7 @@ import { EmailService } from '../mails/email.service';
 import * as bcrypt from 'bcrypt';
 import * as speakeasy from 'speakeasy';
 import * as qrcode from 'qrcode';
+import { ReferralService } from '../referral/referral.service';
 
 @Injectable()
 export class AuthService {
@@ -1465,63 +1417,69 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+     private referralService: ReferralService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // INSCRIPTION (inchangé)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async register(registerDto: RegisterDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: registerDto.email },
-    });
+async register(registerDto: RegisterDto) {
+  const existingUser = await this.prisma.user.findUnique({
+    where: { email: registerDto.email },
+  });
 
-    if (existingUser) {
-      throw new ConflictException('Cet email est déjà utilisé.');
-    }
-
-    const bcryptRounds = parseInt(this.configService.get('BCRYPT_ROUNDS') || '12');
-    const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: registerDto.email,
-        password: hashedPassword,
-        firstName: registerDto.firstName,
-        lastName: registerDto.lastName,
-        phone: registerDto.phone,
-        isVerified: false,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        isVerified: true,
-        createdAt: true,
-      },
-    });
-
-    const verificationToken = await this.generateEmailVerificationToken(user.id, user.email);
-    this.emailService.sendVerificationEmail(
-      user.email,
-      verificationToken,
-      user.firstName ?? undefined,
-    ).catch((err) => {
-      console.warn(`Email non envoyé à ${user.email}:`, err.message);
-    });
-
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    await this.storeHashedRefreshToken(user.id, tokens.refreshToken);
-
-    return {
-      user,
-      ...tokens,
-      requiresEmailVerification: true,
-      message: 'Inscription réussie ! Un email de vérification a été envoyé.',
-    };
+  if (existingUser) {
+    throw new ConflictException('Cet email est déjà utilisé.');
   }
+
+  const bcryptRounds = parseInt(this.configService.get('BCRYPT_ROUNDS') || '12');
+  const hashedPassword = await bcrypt.hash(registerDto.password, bcryptRounds);
+
+  const user = await this.prisma.user.create({
+    data: {
+      email: registerDto.email,
+      password: hashedPassword,
+      firstName: registerDto.firstName,
+      lastName: registerDto.lastName,
+      phone: registerDto.phone,
+      isVerified: false,
+    },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      isVerified: true,
+      createdAt: true,
+    },
+  });
+
+  // ✅ Traitement parrainage APRÈS création
+  if (registerDto.referralCode) {
+    await this.referralService.processReferral(user.id, registerDto.referralCode);
+  }
+
+  const verificationToken = await this.generateEmailVerificationToken(user.id, user.email);
+  this.emailService.sendVerificationEmail(
+    user.email,
+    verificationToken,
+    user.firstName ?? undefined,
+  ).catch((err) => {
+    console.warn(`Email non envoyé à ${user.email}:`, err.message);
+  });
+
+  const tokens = await this.generateTokens(user.id, user.email, user.role);
+  await this.storeHashedRefreshToken(user.id, tokens.refreshToken);
+
+  return {
+    user,
+    ...tokens,
+    requiresEmailVerification: true,
+    message: 'Inscription réussie ! Un email de vérification a été envoyé.',
+  };
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CONNEXION (inchangé)
@@ -2532,7 +2490,6 @@ export class MaintenanceGuard implements CanActivate {
   }
 }
 
-
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
@@ -2586,6 +2543,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Logger,
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -2669,6 +2627,7 @@ class UpdateContestStatusDto {
 @ApiTags('Contest')
 @Controller('contest')
 export class ContestController {
+ private readonly logger = new Logger(ContestController.name);
   constructor(private prisma: PrismaService) {}
 
   // ─── PUBLIC : Résultats officiels ─────────────────────────────────────────
@@ -2724,6 +2683,23 @@ export class ContestController {
       })),
     };
   }
+  
+    // ─── PUBLIC : Infos concours actif ────────────────────────────────────────
+	@Get('current')
+	@ApiOperation({ summary: 'Infos concours actif (public)' })
+	async getCurrentContest() {
+	  const contest = await this.prisma.contest.findFirst({
+	    where: { status: { in: ['OPEN', 'CLOSED', 'RESULTS_PUBLISHED'] } },
+	    orderBy: { createdAt: 'desc' },
+	    select: {
+	      id: true, title: true, status: true,
+	      startDate: true, endDate: true,
+	      prizeAmount: true, prizeDescription: true,
+	      resultsPublishedAt: true,
+	    },
+	  });
+	  return contest;
+	}
 
   // ─── ADMIN : Récupérer le concours le plus récent ─────────────────────────
 
@@ -2824,6 +2800,106 @@ export class ContestController {
       data: updateData,
     });
   }
+  
+
+  
+  // ─── ADMIN : Nouvelle saison ──────────────────────────────────────────────
+  @Post('new-season')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[ADMIN] Démarrer une nouvelle saison' })
+  async startNewSeason(@Body() body: { contestId: string; deleteVideos: boolean }) {
+    const contest = await this.prisma.contest.findUnique({ where: { id: body.contestId } });
+    if (!contest) throw new BadRequestException('Concours introuvable.');
+    if (contest.status !== ContestStatus.RESULTS_PUBLISHED) {
+      throw new BadRequestException('Publiez les résultats avant de démarrer une nouvelle saison.');
+    }
+
+    const [totalVotes, totalRevenueAgg, totalCandidates] = await Promise.all([
+      this.prisma.vote.count({ where: { status: 'COMPLETED' } }),
+      this.prisma.vote.aggregate({ where: { status: 'COMPLETED' }, _sum: { amount: true } }),
+      this.prisma.candidate.count(),
+    ]);
+
+    const totalVoters = await this.prisma.vote.groupBy({
+      by: ['voterId'], where: { status: 'COMPLETED' }
+    }).then(r => r.length);
+
+    const top3Entries = await this.prisma.leaderboardEntry.findMany({
+      orderBy: { totalVotes: 'desc' }, take: 3,
+      include: { candidate: { select: { stageName: true } } },
+    });
+    const top3 = top3Entries.map((e, i) => ({
+      rank: i + 1, stageName: e.candidate.stageName, totalVotes: e.totalVotes,
+    }));
+
+    const candidates = await this.prisma.candidate.findMany({
+      include: {
+        leaderboardEntry: { select: { totalVotes: true, totalAmount: true, rank: true } },
+        user: { select: { email: true, firstName: true, lastName: true } },
+      },
+    });
+    const candidatesSnapshot = candidates.map(c => ({
+      stageName: c.stageName, bio: c.bio, status: c.status,
+      email: c.user.email, firstName: c.user.firstName, lastName: c.user.lastName,
+      totalVotes: c.leaderboardEntry?.totalVotes || 0,
+      totalAmount: c.leaderboardEntry?.totalAmount || 0,
+      rank: c.leaderboardEntry?.rank || null,
+    }));
+
+    await this.prisma.seasonArchive.create({
+      data: {
+        contestId: contest.id, title: contest.title,
+        startDate: contest.startDate, endDate: contest.endDate,
+        prizeAmount: contest.prizeAmount, prizeDescription: contest.prizeDescription,
+        resultsPublishedAt: contest.resultsPublishedAt,
+        totalVotes, totalRevenue: totalRevenueAgg._sum.amount || 0,
+        totalCandidates, totalVoters, top3, candidatesSnapshot,
+      },
+    });
+
+    if (body.deleteVideos) {
+      const { v2: cloudinary } = await import('cloudinary');
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      });
+      const candidatesWithVideos = await this.prisma.candidate.findMany({
+        where: { videoPublicId: { not: null } },
+        select: { id: true, videoPublicId: true },
+      });
+      for (const c of candidatesWithVideos) {
+        try {
+          await cloudinary.uploader.destroy(c.videoPublicId!, { resource_type: 'video' });
+        } catch (e) {
+          this.logger.warn(`Failed to delete video ${c.videoPublicId}`);
+        }
+      }
+    }
+
+    await this.prisma.candidate.updateMany({
+      data: {
+        status: 'PENDING_PAYMENT', videoUrl: null,
+        thumbnailUrl: null, videoPublicId: null,
+        rejectionReason: null, moderatedAt: null, moderatedBy: null,
+      },
+    });
+    await this.prisma.user.updateMany({
+      where: { role: 'CANDIDATE' }, data: { role: 'USER' },
+    });
+    await this.prisma.leaderboardEntry.deleteMany({});
+    await this.prisma.vote.deleteMany({});
+    await this.prisma.candidateRegistrationPayment.deleteMany({});
+
+    return {
+      message: '✅ Nouvelle saison démarrée ! Données archivées.',
+      archived: { title: contest.title, totalVotes, totalRevenue: totalRevenueAgg._sum.amount || 0, totalCandidates, top3 },
+    };
+  }
+
 }
 
 
@@ -2850,7 +2926,6 @@ import { EmailModule } from '../mails/email.module';
   exports: [ContestService, ContestScheduler],
 })
 export class ContestModule {}
-
 
 // src/contest/contest.scheduler.ts — VERSION COMPLÈTE ET FINALE
 // Remplace intégralement ton fichier existant.
@@ -3665,7 +3740,7 @@ export class LeaderboardService {
         thumbnailUrl: e.candidate.thumbnailUrl,
         videoUrl: e.candidate.videoUrl,
         totalVotes: e.totalVotes,
-        totalAmount: e.totalAmount,
+        //totalAmount: e.totalAmount,
         lastUpdated: e.lastUpdated,
       })),
       updatedAt: new Date(),
@@ -3712,22 +3787,25 @@ export class EmailModule {}
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: nodemailer.Transporter;
+  private resend: Resend;
 
   constructor(private configService: ConfigService) {
-    this.transporter = nodemailer.createTransport({
-      host: this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
-      port: parseInt(this.configService.get('SMTP_PORT', '587')),
-      secure: this.configService.get('SMTP_SECURE', 'false') === 'true',
-      auth: {
-        user: this.configService.get('SMTP_USER'),
-        pass: this.configService.get('SMTP_PASS'),
-      },
+    this.resend = new Resend(this.configService.get('RESEND_API_KEY'));
+  }
+
+  private async sendMail(options: { to: string; subject: string; html: string; text?: string }) {
+    return this.resend.emails.send({
+      from: this.from,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      text: options.text,
     });
   }
 
@@ -3764,8 +3842,8 @@ export class EmailService {
     const verifyUrl = `${this.frontendUrl}/verify-email?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+     
         to: email,
         subject: '✅ Confirmez votre email — SpotLightLover',
         html: this.wrap(
@@ -3799,8 +3877,8 @@ export class EmailService {
     const resetUrl = `${this.frontendUrl}/reset-password?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+        
         to: email,
         subject: '🔑 Réinitialisation de votre mot de passe — SpotLightLover',
         html: this.wrap(
@@ -3837,8 +3915,8 @@ export class EmailService {
       ? `Votre paiement de <strong>${amount} FCFA</strong> a été reçu.<br><strong>${details.quantity} vote(s)</strong> ont été attribués à <strong>${details.candidateName}</strong>.`
       : `Votre paiement d'inscription de <strong>${amount} FCFA</strong> a été reçu.<br>Votre compte candidat est maintenant <strong>actif</strong>. Vous pouvez uploader votre vidéo !`;
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+       
         to: email,
         subject,
         html: this.wrap(
@@ -3859,8 +3937,8 @@ export class EmailService {
 
   async sendSuspensionEmail(email: string, firstName: string, reason?: string) {
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+      
         to: email,
         subject: '⚠️ Votre compte a été suspendu — SpotLightLover',
         html: this.wrap(
@@ -3902,8 +3980,8 @@ export class EmailService {
     prizeAmount: number,
   ) {
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+     await this.sendMail({
+       
         to: email,
         subject: '🥇 Tu as gagné le concours SpotLightLover !',
         html: this.wrap(
@@ -3953,8 +4031,8 @@ export class EmailService {
     const medal = medals[position];
     const label = labels[position];
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+      
         to: email,
         subject: `${medal} Tu termines ${label} du concours SpotLightLover !`,
         html: this.wrap(
@@ -4000,8 +4078,8 @@ export class EmailService {
        <td style="padding:12px;text-align:right;color:#7c3aed;font-weight:bold;">${c.votes.toLocaleString('fr-FR')} votes</td></tr>`
     ).join('');
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+       
         to: email,
         subject: '🏆 Le concours SpotLightLover est terminé — Voici les résultats !',
         html: this.wrap(
@@ -4049,8 +4127,8 @@ export class EmailService {
       ? `Tu termines à la <strong>${rank}ème place</strong>.`
       : 'Le classement final sera publié prochainement.';
     try {
-      await this.transporter.sendMail({
-        from: this.from,
+      await this.sendMail({
+       
         to: email,
         subject: '🎬 Le concours SpotLightLover est terminé — Ton classement',
         html: this.wrap(
@@ -4077,6 +4155,7 @@ export class EmailService {
     }
   }
 }
+
 
 // src/payments/dto/payment.dto.ts — VERSION CORRIGÉE ET COMPLÈTE
 // Remplace intégralement ton fichier existant.
@@ -4304,14 +4383,15 @@ export class MeSombService {
 
       const nonce = params.nonce || RandomGenerator.nonce();
       const phone = this.normalizePhoneNumber(params.payer);
+      const detectedService = this.detectOperator(phone);
 
       this.logger.log(
-        `MeSomb payment: ${params.amount} XAF → ${phone} via ${params.service}`,
+        `MeSomb payment: ${params.amount} XAF → ${phone} via ${detectedService} (demandé: ${params.service})`,
       );
 
       const response = await client.makeCollect({
         amount: params.amount,
-        service: params.service,
+        service: detectedService,
         payer: phone,
         nonce,
         currency: params.currency || 'XAF',
@@ -4323,7 +4403,12 @@ export class MeSombService {
         response.isOperationSuccess() && response.isTransactionSuccess();
       const trx = response.transaction;
 
-      this.logger.log(`MeSomb réponse: success=${success}, pk=${trx?.pk}`);
+      this.logger.log(
+	  `MeSomb réponse: success=${success}, pk=${trx?.pk}, ` +
+	  `status=${trx?.status}, message="${trx?.message}", ` +
+	  `isOperationSuccess=${response.isOperationSuccess()}, ` +
+	  `isTransactionSuccess=${response.isTransactionSuccess()}`
+	);
 
       return {
         success,
@@ -4409,6 +4494,7 @@ export class MeSombService {
     return `${amount.toLocaleString('fr-FR')} FCFA`;
   }
 }
+
 
 import {
   Controller,
@@ -5767,21 +5853,9 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   phone?: string;
 }
 
-import {
-  Controller,
-  Get,
-  Patch,
-  Delete,
-  Body,
-  UseGuards,
-  HttpCode,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-  ApiResponse,
-} from '@nestjs/swagger';
+
+import { Controller, Get, Patch, Delete, Body, UseGuards, HttpCode, BadRequestException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { IsString, IsOptional, MinLength, IsEmail } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { PrismaService } from '../prisma.service';
@@ -5790,36 +5864,12 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as bcrypt from 'bcrypt';
 
 class UpdateMyProfileDto {
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  firstName?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  lastName?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  @MinLength(8)
-  newPassword?: string;
-
-  @ApiProperty({ required: false, description: 'Requis si newPassword fourni' })
-  @IsOptional()
-  @IsString()
-  currentPassword?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString() firstName?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString() lastName?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString() phone?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsEmail() email?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString() @MinLength(8) newPassword?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString() currentPassword?: string;
 }
 
 @ApiTags('Me')
@@ -5835,23 +5885,13 @@ export class MeController {
     return this.prisma.user.findUnique({
       where: { id: user.id },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        role: true,
-        isActive: true,
-        isVerified: true,
-        createdAt: true,
+        id: true, email: true, firstName: true, lastName: true,
+        phone: true, role: true, isActive: true, isVerified: true,
+        googleId: true, createdAt: true,
         candidate: {
           select: {
-            id: true,
-            stageName: true,
-            bio: true,
-            videoUrl: true,
-            thumbnailUrl: true,
-            status: true,
+            id: true, stageName: true, bio: true,
+            videoUrl: true, thumbnailUrl: true, status: true,
           },
         },
       },
@@ -5863,10 +5903,7 @@ export class MeController {
   @ApiResponse({ status: 200, description: 'Profil mis à jour' })
   @ApiResponse({ status: 400, description: 'Mot de passe actuel incorrect' })
   async updateMe(@CurrentUser() user: any, @Body() dto: UpdateMyProfileDto) {
-    const existing = await this.prisma.user.findUnique({
-      where: { id: user.id },
-    });
-
+    const existing = await this.prisma.user.findUnique({ where: { id: user.id } });
     const updateData: any = {};
 
     if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
@@ -5874,29 +5911,29 @@ export class MeController {
     if (dto.phone !== undefined) updateData.phone = dto.phone;
     if (dto.email !== undefined) updateData.email = dto.email;
 
-    // Changement de mot de passe
     if (dto.newPassword) {
-      if (!dto.currentPassword) {
-        throw new Error('Le mot de passe actuel est requis pour changer le mot de passe.');
+      if (!existing!.password) {
+        // ✅ Compte Google → définir directement
+        updateData.password = await bcrypt.hash(dto.newPassword, 12);
+      } else {
+        // ✅ Compte normal → vérifier mot de passe actuel
+        if (!dto.currentPassword) {
+          throw new BadRequestException('Le mot de passe actuel est requis.');
+        }
+        const valid = await bcrypt.compare(dto.currentPassword, existing!.password);
+        if (!valid) {
+          throw new BadRequestException('Mot de passe actuel incorrect.');
+        }
+        updateData.password = await bcrypt.hash(dto.newPassword, 12);
       }
-      const valid = await bcrypt.compare(dto.currentPassword, existing!.password);
-      if (!valid) {
-        throw new Error('Mot de passe actuel incorrect.');
-      }
-      updateData.password = await bcrypt.hash(dto.newPassword, 12);
     }
 
     return this.prisma.user.update({
       where: { id: user.id },
       data: updateData,
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        role: true,
-        updatedAt: true,
+        id: true, email: true, firstName: true,
+        lastName: true, phone: true, role: true, updatedAt: true,
       },
     });
   }
@@ -5904,9 +5941,7 @@ export class MeController {
   @Delete()
   @HttpCode(200)
   @ApiOperation({ summary: 'Supprimer mon compte (irréversible)' })
-  @ApiResponse({ status: 200, description: 'Compte supprimé' })
   async deleteMe(@CurrentUser() user: any) {
-    // Si candidat, supprimer aussi la vidéo Cloudinary (logique dans CandidatesService)
     await this.prisma.user.delete({ where: { id: user.id } });
     return { message: 'Compte supprimé avec succès.' };
   }
@@ -7025,6 +7060,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { SettingsModule } from './settings/settings.module';
 import { MaintenanceGuard } from './common/guards/maintenance.guard';
 import { PrismaService } from './prisma.service';
+import { ReferralModule } from './referral/referral.module';
 
 @Module({
   imports: [
@@ -7048,6 +7084,7 @@ import { PrismaService } from './prisma.service';
     VotesModule,
     WebhooksModule,
     SettingsModule, // ✅ NOUVEAU
+    ReferralModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
@@ -7110,7 +7147,7 @@ async function bootstrap() {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS: Origin ${origin} not allowed`));
+      callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -7182,6 +7219,8 @@ async function bootstrap() {
 
 bootstrap();
 
+
+// backend/src/prisma.service.ts
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -7192,9 +7231,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor() {
     const connectionString = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
     
-    const pool = new Pool({ connectionString });
+    // ✅ CORRECTION : accepter les certificats auto-signés pour Render
+    const pool = new Pool({ 
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false, // ← Accepte les certificats auto-signés
+      },
+    });
+    
     const adapter = new PrismaPg(pool);
-
+    
     super({
       adapter,
       log: ['error', 'warn'],
@@ -7271,6 +7317,7 @@ MESOMB_SECRET_KEY=3627ee5d-8fa4-457e-952a-5ef4c4d4322e
 # https://votre-domaine.com/api/webhooks/mesomb
 #MESOMB_WEBHOOK_URL=https://votre-domaine.com/api/webhooks/mesomb
 
+
 # ─── Cloudinary (Stockage vidéo) ────────────────────────────
 # Créer un compte sur https://cloudinary.com (gratuit jusqu'à 25GB)
 CLOUDINARY_CLOUD_NAME=dmfpicwlt
@@ -7338,6 +7385,9 @@ FRONTEND_URL=http://localhost:5173
 MESOMB_WEBHOOK_URL=https://3f27-165-210-39-48.ngrok-free.app/api/webhooks/mesomb
 CORS_ORIGINS=http://localhost:5173,http://localhost:3001,https://3f27-165-210-39-48.ngrok-free.app
 
+Admin password= Admin@SpotLight2025!
+
+
 {
   "name": "backend",
   "version": "0.0.1",
@@ -7346,12 +7396,13 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3001,https://3f27-165-210-39
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "postinstall": "prisma generate",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -7392,6 +7443,7 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3001,https://3f27-165-210-39
     "prisma": "^7.4.2",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
+    "resend": "^6.10.0",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.3",
     "speakeasy": "^2.0.0"
@@ -7446,8 +7498,6 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3001,https://3f27-165-210-39
 }
 
 
-// This file was generated by Prisma, and assumes you have installed the following:
-// npm install --save-dev prisma dotenv
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
@@ -7457,7 +7507,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: process.env.DATABASE_URL!,
   },
 });
 
@@ -7515,6 +7565,7 @@ export function MaintenancePage({ message }: { message?: string }) {
     </div>
   );
 }
+
 
 // frontend/src/components/common/PrivateLayout.tsx — VERSION CORRIGÉE
 // Remplace intégralement ton fichier existant.
@@ -7627,7 +7678,6 @@ export function PrivateLayout() {
 }
 
 export default PrivateLayout;
-
 
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -7757,7 +7807,6 @@ export default function PublicLayout() {
   );
 }
 
-
 import { useEffect, useState, useCallback } from 'react';
 import { CheckCircle, XCircle, Loader2, Smartphone } from 'lucide-react';
 import api from '../../services/api';
@@ -7771,7 +7820,7 @@ interface Props {
   candidateName?: string;
 }
 
-type TxStatus = 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PENDING';
+type TxStatus = 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PENDING'| 'CANCELLED';
 
 export default function PaymentStatusModal({
   transactionId,
@@ -7908,6 +7957,331 @@ export default function PaymentStatusModal({
 }
 
 
+import { useState, useEffect } from 'react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, Legend,
+} from 'recharts';
+import { Download, TrendingUp, Heart, Users, Loader, RefreshCw } from 'lucide-react';
+import toast from 'react-hot-toast';
+import api from '../../services/api';
+
+interface RevenueDay {
+  date: string;
+  totalRevenue: number;
+  totalVotes: number;
+  newUsers: number;
+  newCandidates: number;
+}
+
+interface CandidateVoteStat {
+  id: string;
+  stageName: string;
+  totalVotes: number;
+}
+
+interface PaymentStats {
+  transactions: {
+    total: number;
+    completed: number;
+    failed: number;
+  };
+  revenue: {
+    total: number;
+  };
+  successRate: number;
+}
+
+export default function AdminAnalyticsPage() {
+  const [revenueData, setRevenueData] = useState<RevenueDay[]>([]);
+  const [voteData, setVoteData] = useState<CandidateVoteStat[]>([]);
+  const [paymentStats, setPaymentStats] = useState<PaymentStats | null>(null);
+  const [dashStats, setDashStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [period, setPeriod] = useState(30);
+
+  useEffect(() => {
+    loadAll();
+  }, [period]);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const [rev, votes, payments, dash] = await Promise.all([
+        api.get(`/analytics/revenue?days=${period}`),
+        api.get('/analytics/votes?limit=10'),
+        api.get('/analytics/payments'),
+        api.get('/analytics/dashboard'),
+      ]);
+      setRevenueData(rev.data || []);
+      setVoteData(votes.data || []);
+      setPaymentStats(payments.data);
+      setDashStats(dash.data);
+    } catch {
+      toast.error('Impossible de charger les analytics.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Export CSV ──────────────────────────────────────────────────────────
+
+  const exportCSV = async (type: string) => {
+    setExporting(type);
+    try {
+      const res = await api.get(`/analytics/export?type=${type}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${type}-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Export "${type}" téléchargé !`);
+    } catch {
+      toast.error('Échec de l\'export.');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  // ─── Formatter date pour les graphes ────────────────────────────────────
+
+  const formatDate = (d: string) =>
+    new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+
+  const formatFCFA = (v: number) =>
+    v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader className="w-8 h-8 animate-spin text-purple-600" />
+      </div>
+    );
+  }
+
+  const successRate = paymentStats
+    ? Math.round((paymentStats.transactions.completed / Math.max(paymentStats.transactions.total, 1)) * 100)
+    : 0;
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+
+      {/* ─── Header ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-bold text-gray-900">📊 Analytics</h1>
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+            {[7, 30, 90].map((d) => (
+              <button
+                key={d}
+                onClick={() => setPeriod(d)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  period === d ? 'bg-white shadow text-purple-700' : 'text-gray-600'
+                }`}
+              >
+                {d}j
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={loadAll}
+            className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition"
+          >
+            <RefreshCw size={14} /> Actualiser
+          </button>
+        </div>
+      </div>
+
+      {/* ─── KPI résumé ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          {
+            label: 'Revenu total',
+            value: `${(dashStats?.revenue?.total || 0).toLocaleString('fr-FR')} FCFA`,
+            icon: TrendingUp,
+            color: 'text-green-600',
+            bg: 'bg-green-50',
+          },
+          {
+            label: 'Votes confirmés',
+            value: (dashStats?.votes?.completed || 0).toLocaleString(),
+            icon: Heart,
+            color: 'text-pink-600',
+            bg: 'bg-pink-50',
+          },
+          {
+            label: 'Taux de succès paiements',
+            value: `${successRate}%`,
+            icon: TrendingUp,
+            color: successRate >= 70 ? 'text-green-600' : 'text-orange-600',
+            bg: successRate >= 70 ? 'bg-green-50' : 'bg-orange-50',
+          },
+          {
+            label: 'Utilisateurs total',
+            value: (dashStats?.users?.total || 0).toLocaleString(),
+            icon: Users,
+            color: 'text-blue-600',
+            bg: 'bg-blue-50',
+          },
+        ].map(({ label, value, icon: Icon, color, bg }) => (
+          <div key={label} className={`${bg} rounded-2xl p-5`}>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-gray-600 text-xs font-semibold">{label}</p>
+              <Icon size={16} className={color} />
+            </div>
+            <p className={`text-2xl font-bold ${color}`}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ─── Graphe revenus par jour ─────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <h2 className="font-bold text-gray-900 mb-5">💰 Revenus des {period} derniers jours (FCFA)</h2>
+        {revenueData.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-8">Aucune donnée disponible.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={revenueData.map((d) => ({ ...d, date: formatDate(d.date) }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={formatFCFA} tick={{ fontSize: 11 }} />
+              <Tooltip
+                formatter={(v: any) => [`${Number(v || 0).toLocaleString('fr-FR')} FCFA`, 'Revenus']}
+                labelStyle={{ fontWeight: 'bold' }}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="totalRevenue"
+                name="Revenus (FCFA)"
+                stroke="#7c3aed"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ─── Graphe votes par jour ───────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <h2 className="font-bold text-gray-900 mb-5">❤️ Votes confirmés par jour</h2>
+        {revenueData.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-8">Aucune donnée disponible.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={revenueData.map((d) => ({ ...d, date: formatDate(d.date) }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: any) => [Number(v || 0), 'Votes']} />
+              <Bar dataKey="totalVotes" name="Votes" fill="#ec4899" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ─── Top candidats ───────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <h2 className="font-bold text-gray-900 mb-5">🏆 Top candidats par votes</h2>
+        {voteData.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-8">Aucun vote enregistré.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={voteData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis type="number" tick={{ fontSize: 11 }} />
+              <YAxis
+                dataKey="stageName"
+                type="category"
+                width={120}
+                tick={{ fontSize: 11 }}
+              />
+              <Tooltip formatter={(v: any) => [Number(v || 0), 'Votes']} />
+              <Bar dataKey="totalVotes" name="Votes" fill="#7c3aed" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ─── Stats paiements ─────────────────────────────────────────────── */}
+      {paymentStats && (
+        <div className="bg-white rounded-2xl shadow-sm p-6">
+          <h2 className="font-bold text-gray-900 mb-4">💳 Statistiques paiements</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Total transactions', value: paymentStats.transactions.total, color: 'text-gray-900' },
+              { label: 'Confirmées', value: paymentStats.transactions.completed, color: 'text-green-600' },
+              { label: 'Échouées', value: paymentStats.transactions.failed, color: 'text-red-600' },
+              { label: 'Taux succès', value: `${successRate}%`, color: successRate >= 70 ? 'text-green-600' : 'text-orange-600' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-gray-50 rounded-xl p-4 text-center">
+                <p className="text-xs text-gray-500 font-semibold mb-1">{label}</p>
+                <p className={`text-2xl font-bold ${color}`}>{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Barre de progression taux succès */}
+          <div className="mt-4">
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Taux de confirmation des paiements</span>
+              <span>{successRate}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className={`h-2.5 rounded-full transition-all ${
+                  successRate >= 70 ? 'bg-green-500' : successRate >= 50 ? 'bg-orange-400' : 'bg-red-500'
+                }`}
+                style={{ width: `${successRate}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Export CSV ─────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <h2 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <Download size={16} /> Exports CSV
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { type: 'users',        label: 'Utilisateurs',  icon: '👥' },
+            { type: 'candidates',   label: 'Candidats',     icon: '🎬' },
+            { type: 'votes',        label: 'Votes',         icon: '❤️' },
+            { type: 'transactions', label: 'Transactions',  icon: '💳' },
+          ].map(({ type, label, icon }) => (
+            <button
+              key={type}
+              onClick={() => exportCSV(type)}
+              disabled={!!exporting}
+              className="flex items-center justify-center gap-2 py-3 px-4 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition disabled:opacity-60"
+            >
+              {exporting === type
+                ? <Loader size={14} className="animate-spin" />
+                : <Download size={14} />}
+              {icon} {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Les fichiers CSV sont générés en temps réel depuis la base de données.
+        </p>
+      </div>
+
+    </div>
+  );
+}
+
+
 // frontend/src/contexts/AuthContext.tsx — VERSION MISE À JOUR
 // Remplace intégralement ton fichier existant.
 //
@@ -7936,6 +8310,7 @@ interface AuthUser {
   role: 'USER' | 'CANDIDATE' | 'ADMIN';
   isVerified: boolean;
   avatar?: string | null;
+  googleId?: string | null;
 }
 
 interface AuthContextType {
@@ -8155,616 +8530,6 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
   return ctx;
-}
-
-
-import { useState, useEffect } from 'react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend,
-} from 'recharts';
-import { Download, TrendingUp, Heart, Users, Loader, RefreshCw } from 'lucide-react';
-import toast from 'react-hot-toast';
-import api from '../../services/api';
-
-interface RevenueDay {
-  date: string;
-  totalRevenue: number;
-  totalVotes: number;
-  newUsers: number;
-  newCandidates: number;
-}
-
-interface CandidateVoteStat {
-  id: string;
-  stageName: string;
-  totalVotes: number;
-}
-
-interface PaymentStats {
-  transactions: {
-    total: number;
-    completed: number;
-    failed: number;
-  };
-  revenue: {
-    total: number;
-  };
-  successRate: number;
-}
-
-export default function AdminAnalyticsPage() {
-  const [revenueData, setRevenueData] = useState<RevenueDay[]>([]);
-  const [voteData, setVoteData] = useState<CandidateVoteStat[]>([]);
-  const [paymentStats, setPaymentStats] = useState<PaymentStats | null>(null);
-  const [dashStats, setDashStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState<string | null>(null);
-  const [period, setPeriod] = useState(30);
-
-  useEffect(() => {
-    loadAll();
-  }, [period]);
-
-  const loadAll = async () => {
-    setLoading(true);
-    try {
-      const [rev, votes, payments, dash] = await Promise.all([
-        api.get(`/analytics/revenue?days=${period}`),
-        api.get('/analytics/votes?limit=10'),
-        api.get('/analytics/payments'),
-        api.get('/analytics/dashboard'),
-      ]);
-      setRevenueData(rev.data || []);
-      setVoteData(votes.data || []);
-      setPaymentStats(payments.data);
-      setDashStats(dash.data);
-    } catch {
-      toast.error('Impossible de charger les analytics.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ─── Export CSV ──────────────────────────────────────────────────────────
-
-  const exportCSV = async (type: string) => {
-    setExporting(type);
-    try {
-      const res = await api.get(`/analytics/export?type=${type}`, {
-        responseType: 'blob',
-      });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${type}-${new Date().toISOString().split('T')[0]}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success(`Export "${type}" téléchargé !`);
-    } catch {
-      toast.error('Échec de l\'export.');
-    } finally {
-      setExporting(null);
-    }
-  };
-
-  // ─── Formatter date pour les graphes ────────────────────────────────────
-
-  const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-
-  const formatFCFA = (v: number) =>
-    v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader className="w-8 h-8 animate-spin text-purple-600" />
-      </div>
-    );
-  }
-
-  const successRate = paymentStats
-    ? Math.round((paymentStats.transactions.completed / Math.max(paymentStats.transactions.total, 1)) * 100)
-    : 0;
-
-  return (
-    <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
-
-      {/* ─── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">📊 Analytics</h1>
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                onClick={() => setPeriod(d)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  period === d ? 'bg-white shadow text-purple-700' : 'text-gray-600'
-                }`}
-              >
-                {d}j
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={loadAll}
-            className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50 transition"
-          >
-            <RefreshCw size={14} /> Actualiser
-          </button>
-        </div>
-      </div>
-
-      {/* ─── KPI résumé ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          {
-            label: 'Revenu total',
-            value: `${(dashStats?.revenue?.total || 0).toLocaleString('fr-FR')} FCFA`,
-            icon: TrendingUp,
-            color: 'text-green-600',
-            bg: 'bg-green-50',
-          },
-          {
-            label: 'Votes confirmés',
-            value: (dashStats?.votes?.completed || 0).toLocaleString(),
-            icon: Heart,
-            color: 'text-pink-600',
-            bg: 'bg-pink-50',
-          },
-          {
-            label: 'Taux de succès paiements',
-            value: `${successRate}%`,
-            icon: TrendingUp,
-            color: successRate >= 70 ? 'text-green-600' : 'text-orange-600',
-            bg: successRate >= 70 ? 'bg-green-50' : 'bg-orange-50',
-          },
-          {
-            label: 'Utilisateurs total',
-            value: (dashStats?.users?.total || 0).toLocaleString(),
-            icon: Users,
-            color: 'text-blue-600',
-            bg: 'bg-blue-50',
-          },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <div key={label} className={`${bg} rounded-2xl p-5`}>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-gray-600 text-xs font-semibold">{label}</p>
-              <Icon size={16} className={color} />
-            </div>
-            <p className={`text-2xl font-bold ${color}`}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* ─── Graphe revenus par jour ─────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl shadow-sm p-6">
-        <h2 className="font-bold text-gray-900 mb-5">💰 Revenus des {period} derniers jours (FCFA)</h2>
-        {revenueData.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-8">Aucune donnée disponible.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={revenueData.map((d) => ({ ...d, date: formatDate(d.date) }))}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={formatFCFA} tick={{ fontSize: 11 }} />
-              <Tooltip
-                formatter={(v: number) => [`${v.toLocaleString('fr-FR')} FCFA`, 'Revenus']}
-                labelStyle={{ fontWeight: 'bold' }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="totalRevenue"
-                name="Revenus (FCFA)"
-                stroke="#7c3aed"
-                strokeWidth={2.5}
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ─── Graphe votes par jour ───────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl shadow-sm p-6">
-        <h2 className="font-bold text-gray-900 mb-5">❤️ Votes confirmés par jour</h2>
-        {revenueData.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-8">Aucune donnée disponible.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={revenueData.map((d) => ({ ...d, date: formatDate(d.date) }))}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => [v, 'Votes']} />
-              <Bar dataKey="totalVotes" name="Votes" fill="#ec4899" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ─── Top candidats ───────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl shadow-sm p-6">
-        <h2 className="font-bold text-gray-900 mb-5">🏆 Top candidats par votes</h2>
-        {voteData.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-8">Aucun vote enregistré.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={voteData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis
-                dataKey="stageName"
-                type="category"
-                width={120}
-                tick={{ fontSize: 11 }}
-              />
-              <Tooltip formatter={(v: number) => [v, 'Votes']} />
-              <Bar dataKey="totalVotes" name="Votes" fill="#7c3aed" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ─── Stats paiements ─────────────────────────────────────────────── */}
-      {paymentStats && (
-        <div className="bg-white rounded-2xl shadow-sm p-6">
-          <h2 className="font-bold text-gray-900 mb-4">💳 Statistiques paiements</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { label: 'Total transactions', value: paymentStats.transactions.total, color: 'text-gray-900' },
-              { label: 'Confirmées', value: paymentStats.transactions.completed, color: 'text-green-600' },
-              { label: 'Échouées', value: paymentStats.transactions.failed, color: 'text-red-600' },
-              { label: 'Taux succès', value: `${successRate}%`, color: successRate >= 70 ? 'text-green-600' : 'text-orange-600' },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="bg-gray-50 rounded-xl p-4 text-center">
-                <p className="text-xs text-gray-500 font-semibold mb-1">{label}</p>
-                <p className={`text-2xl font-bold ${color}`}>{value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Barre de progression taux succès */}
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>Taux de confirmation des paiements</span>
-              <span>{successRate}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div
-                className={`h-2.5 rounded-full transition-all ${
-                  successRate >= 70 ? 'bg-green-500' : successRate >= 50 ? 'bg-orange-400' : 'bg-red-500'
-                }`}
-                style={{ width: `${successRate}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Export CSV ─────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl shadow-sm p-6">
-        <h2 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <Download size={16} /> Exports CSV
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { type: 'users',        label: 'Utilisateurs',  icon: '👥' },
-            { type: 'candidates',   label: 'Candidats',     icon: '🎬' },
-            { type: 'votes',        label: 'Votes',         icon: '❤️' },
-            { type: 'transactions', label: 'Transactions',  icon: '💳' },
-          ].map(({ type, label, icon }) => (
-            <button
-              key={type}
-              onClick={() => exportCSV(type)}
-              disabled={!!exporting}
-              className="flex items-center justify-center gap-2 py-3 px-4 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition disabled:opacity-60"
-            >
-              {exporting === type
-                ? <Loader size={14} className="animate-spin" />
-                : <Download size={14} />}
-              {icon} {label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-gray-400 mt-3">
-          Les fichiers CSV sont générés en temps réel depuis la base de données.
-        </p>
-      </div>
-
-    </div>
-  );
-}
-
-
-import { useState, useEffect } from 'react';
-import api from '../../services/api';
-
-interface AuditLog {
-  id: string;
-  action: string;
-  entity: string;
-  entityId: string;
-  userId: string | null;
-  metadata: any;
-  ipAddress: string | null;
-  createdAt: string;
-  user?: {
-    email: string;
-    role: string;
-  };
-}
-
-export default function AdminAuditLogsPage() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState({
-    action: 'ALL',
-    entity: 'ALL',
-  });
-  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-
-  useEffect(() => {
-    loadLogs();
-  }, [filter]);
-
-  const loadLogs = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (filter.action !== 'ALL') params.append('action', filter.action);
-      if (filter.entity !== 'ALL') params.append('entity', filter.entity);
-
-      const response = await api.get(`/audit-logs?${params.toString()}`);
-      setLogs(response.data.data || response.data);
-    } catch (error) {
-      console.error('Failed to load audit logs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getActionColor = (action: string) => {
-    if (action.includes('CREATE')) return 'bg-green-100 text-green-700';
-    if (action.includes('UPDATE')) return 'bg-blue-100 text-blue-700';
-    if (action.includes('DELETE')) return 'bg-red-100 text-red-700';
-    if (action.includes('APPROVE')) return 'bg-purple-100 text-purple-700';
-    if (action.includes('REJECT')) return 'bg-red-100 text-red-700';
-    return 'bg-gray-100 text-gray-700';
-  };
-
-  const getActionIcon = (action: string) => {
-    if (action.includes('CREATE')) return '➕';
-    if (action.includes('UPDATE')) return '✏️';
-    if (action.includes('DELETE')) return '🗑️';
-    if (action.includes('APPROVE')) return '✅';
-    if (action.includes('REJECT')) return '❌';
-    if (action.includes('LOGIN')) return '🔑';
-    return '📝';
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl">Chargement des logs...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold">📋 Audit Logs</h1>
-        <button
-          onClick={loadLogs}
-          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-        >
-          🔄 Actualiser
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-semibold mb-2">Action</label>
-            <select
-              value={filter.action}
-              onChange={(e) => setFilter({ ...filter, action: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            >
-              <option value="ALL">Toutes les actions</option>
-              <option value="USER_CREATE">Création utilisateur</option>
-              <option value="USER_UPDATE">Modification utilisateur</option>
-              <option value="USER_DELETE">Suppression utilisateur</option>
-              <option value="CANDIDATE_APPROVE">Approbation candidat</option>
-              <option value="CANDIDATE_REJECT">Rejet candidat</option>
-              <option value="VOTE_REFUND">Remboursement vote</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold mb-2">Entité</label>
-            <select
-              value={filter.entity}
-              onChange={(e) => setFilter({ ...filter, entity: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            >
-              <option value="ALL">Toutes les entités</option>
-              <option value="USER">Users</option>
-              <option value="CANDIDATE">Candidats</option>
-              <option value="VOTE">Votes</option>
-              <option value="TRANSACTION">Transactions</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Total Actions</h3>
-          <p className="text-3xl font-bold text-purple-600">{logs.length}</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Créations</h3>
-          <p className="text-3xl font-bold text-green-600">
-            {logs.filter(l => l.action.includes('CREATE')).length}
-          </p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Modifications</h3>
-          <p className="text-3xl font-bold text-blue-600">
-            {logs.filter(l => l.action.includes('UPDATE')).length}
-          </p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Suppressions</h3>
-          <p className="text-3xl font-bold text-red-600">
-            {logs.filter(l => l.action.includes('DELETE')).length}
-          </p>
-        </div>
-      </div>
-
-      {/* Logs Table */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Date/Heure</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Action</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Entité</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Utilisateur</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">IP</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold">Détails</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {logs.map((log) => (
-              <tr key={log.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {new Date(log.createdAt).toLocaleString('fr-FR')}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getActionColor(log.action)}`}>
-                    {getActionIcon(log.action)} {log.action}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm font-mono text-gray-700">
-                  {log.entity}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  {log.user ? (
-                    <div>
-                      <p className="font-semibold">{log.user.email}</p>
-                      <p className="text-xs text-gray-500">{log.user.role}</p>
-                    </div>
-                  ) : (
-                    <span className="text-gray-400">System</span>
-                  )}
-                </td>
-                <td className="px-6 py-4 text-sm font-mono text-gray-600">
-                  {log.ipAddress || 'N/A'}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  <button
-                    onClick={() => setSelectedLog(log)}
-                    className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                  >
-                    👁️ Voir
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {logs.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            Aucun log trouvé avec les filtres actuels.
-          </div>
-        )}
-      </div>
-
-      {/* Log Details Modal */}
-      {selectedLog && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-          onClick={() => setSelectedLog(null)}
-        >
-          <div 
-            className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Détails du Log</h2>
-              <button 
-                onClick={() => setSelectedLog(null)}
-                className="text-gray-500 hover:text-gray-700 text-2xl"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-semibold text-gray-600">ID</label>
-                <p className="font-mono text-sm bg-gray-100 p-2 rounded">{selectedLog.id}</p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Date/Heure</label>
-                <p className="text-sm">{new Date(selectedLog.createdAt).toLocaleString('fr-FR')}</p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Action</label>
-                <p className="text-sm">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getActionColor(selectedLog.action)}`}>
-                    {selectedLog.action}
-                  </span>
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Entité</label>
-                <p className="text-sm">{selectedLog.entity} (ID: {selectedLog.entityId})</p>
-              </div>
-
-              {selectedLog.user && (
-                <div>
-                  <label className="text-sm font-semibold text-gray-600">Utilisateur</label>
-                  <p className="text-sm">{selectedLog.user.email} ({selectedLog.user.role})</p>
-                </div>
-              )}
-
-              {selectedLog.ipAddress && (
-                <div>
-                  <label className="text-sm font-semibold text-gray-600">Adresse IP</label>
-                  <p className="text-sm font-mono">{selectedLog.ipAddress}</p>
-                </div>
-              )}
-
-              <div>
-                <label className="text-sm font-semibold text-gray-600">Métadonnées</label>
-                <pre className="text-xs bg-gray-900 text-green-400 p-4 rounded overflow-x-auto">
-                  {JSON.stringify(selectedLog.metadata, null, 2)}
-                </pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 
@@ -9211,6 +8976,49 @@ export default function AdminContestPage() {
       toast.error(err.response?.data?.message || 'Erreur lors de la mise à jour.');
     }
   };
+  
+  //----------------------------startNewSeason--------------------------------------
+  
+  const startNewSeason = async () => {
+  if (!contest) return;
+  
+  const confirmDelete = window.confirm(
+    '⚠️ ATTENTION — Nouvelle saison\n\n' +
+    'Cette action va :\n' +
+    '• Archiver toutes les données de cette saison\n' +
+    '• Supprimer toutes les vidéos des candidats\n' +
+    '• Remettre tous les candidats en attente de paiement\n' +
+    '• Vider tous les votes\n\n' +
+    'Voulez-vous SUPPRIMER les vidéos Cloudinary ? (Recommandé pour éviter les surcoûts)'
+  );
+  
+  const deleteVideos = confirmDelete;
+  
+  const finalConfirm = window.confirm(
+    `✅ Confirmer le démarrage de la nouvelle saison ?\n\n` +
+    `Saison archivée : "${contest.title}"\n` +
+    `Vidéos : ${deleteVideos ? 'SUPPRIMÉES' : 'conservées'}\n\n` +
+    `Cette action est IRRÉVERSIBLE.`
+  );
+  
+  if (!finalConfirm) return;
+  
+  setActionLoading('new-season');
+  try {
+    const res = await api.post('/contest/new-season', {
+      contestId: contest.id,
+      deleteVideos,
+    });
+    toast.success('✅ Nouvelle saison démarrée ! Données archivées.');
+    await loadData();
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || 'Erreur.');
+  } finally {
+    setActionLoading(null);
+  }
+};
+  
+  //------------------------------------------------------------------
 
   const changeStatus = async (newStatus: string) => {
     const confirmMessages: Record<string, string> = {
@@ -9441,6 +9249,19 @@ export default function AdminContestPage() {
           </form>
         </div>
       )}
+      
+	      {contest.status === 'RESULTS_PUBLISHED' && (
+	  <button
+	    onClick={startNewSeason}
+	    disabled={actionLoading === 'new-season'}
+	    className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700 transition disabled:opacity-60"
+	  >
+	    {actionLoading === 'new-season'
+	      ? <Loader size={16} className="animate-spin" />
+	      : '🔄'}
+	    Démarrer nouvelle saison
+	  </button>
+	)}
 
       {/* ─── Classement ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -9464,7 +9285,7 @@ export default function AdminContestPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900 truncate">{e.stageName}</p>
-                  <p className="text-xs text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} FCFA</p>
+                  
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-lg font-bold text-pink-600">{e.totalVotes.toLocaleString()}</p>
@@ -9478,6 +9299,7 @@ export default function AdminContestPage() {
     </div>
   );
 }
+
 
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
@@ -9509,7 +9331,7 @@ interface LeaderEntry {
   stageName: string;
   thumbnailUrl?: string;
   totalVotes: number;
-  totalAmount: number;
+  //totalAmount: number;
 }
 
 export default function AdminDashboard() {
@@ -9765,7 +9587,7 @@ export default function AdminDashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 text-sm truncate">{e.stageName}</p>
-                    <p className="text-xs text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} FCFA</p>
+                    
                   </div>
                   <div className="flex-shrink-0 text-right">
                     <p className="font-bold text-pink-600 text-sm">{e.totalVotes}</p>
@@ -9983,7 +9805,7 @@ export default function AdminMaintenancePage() {
 
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, UserCheck, UserX, ChevronLeft, ChevronRight, Loader, RefreshCw } from 'lucide-react';
+import { Search, UserCheck, UserX, Trash2, ChevronLeft, ChevronRight, Loader, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 
@@ -10068,6 +9890,21 @@ export default function AdminUsersPage() {
       setActionLoading(null);
     }
   };
+  
+  const deleteUser = async (userId: string, email: string) => {
+  if (!window.confirm(`Supprimer définitivement le compte de ${email} ? Action irréversible.`)) return;
+  setActionLoading(userId);
+  try {
+    await api.delete(`/users/${userId}`);
+    toast.success('Utilisateur supprimé.');
+    loadUsers(pagination.page);
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || 'Erreur.');
+  } finally {
+    setActionLoading(null);
+  }
+};
+  
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-5">
@@ -10216,8 +10053,20 @@ export default function AdminUsersPage() {
                                 : user.isActive
                                   ? <><UserX size={12} /> Désactiver</>
                                   : <><UserCheck size={12} /> Activer</>}
-                            </button>
+                            </button> 
                           )}
+                          
+                              {/* Supprimer */}
+			    {user.role !== 'ADMIN' && (
+			      <button
+				onClick={() => deleteUser(user.id, user.email)}
+				disabled={isLoading}
+				className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-semibold hover:bg-red-100 transition disabled:opacity-60 flex items-center gap-1"
+			      >
+				<Trash2 size={12} /> Supprimer
+			      </button>
+			    )}
+                          
                         </div>
                       </td>
                     </tr>
@@ -11114,7 +10963,6 @@ export default function GoogleCallbackPage() {
   );
 }
 
-
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
@@ -11297,7 +11145,6 @@ export default function LoginPage() {
     </div>
   );
 }
-
 
 // frontend/src/pages/auth/RegisterPage.tsx — VERSION CORRIGÉE
 // Remplace intégralement ton fichier existant.
@@ -11892,7 +11739,6 @@ export default function VerifyEmailPage() {
 }
 
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // CandidateDashboardPage.tsx — SpotLightLover
 //
@@ -11948,6 +11794,69 @@ const MAX_VIDEO_SIZE_MB = 200;
 const MAX_VIDEO_DURATION_S = 240;
 const MIN_VIDEO_DURATION_S = 10;
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+
+//--------------------------------------------------------------------------------
+
+function PaymentForm({ candidateId }: { candidateId: string }) {
+  const [phone, setPhone] = useState('');
+  const [operator, setOperator] = useState<'MTN' | 'ORANGE'>('MTN');
+  const [paying, setPaying] = useState(false);
+
+  const handlePay = async () => {
+    if (!phone || phone.length < 9) {
+      toast.error('Entrez un numéro valide (ex: 677000000)');
+      return;
+    }
+    setPaying(true);
+    try {
+      await api.post('/payments/candidate-registration', {
+        candidateId,
+        phone,
+        operator,
+      });
+      toast.success('📱 Confirmez le paiement sur votre téléphone !');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Erreur de paiement.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex gap-2">
+        {(['MTN', 'ORANGE'] as const).map((op) => (
+          <button
+            key={op}
+            onClick={() => setOperator(op)}
+            className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition ${
+              operator === op
+                ? 'bg-orange-500 text-white border-orange-500'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            {op === 'MTN' ? '📱 MTN' : '🟠 Orange'}
+          </button>
+        ))}
+      </div>
+      <input
+        type="tel"
+        placeholder="Numéro Mobile Money (ex: 677000000)"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-orange-500 text-sm"
+      />
+      <button
+        onClick={handlePay}
+        disabled={paying}
+        className="w-full py-3 bg-orange-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-orange-600 transition disabled:opacity-60"
+      >
+        {paying ? <Loader size={16} className="animate-spin" /> : '💳'}
+        {paying ? 'Paiement en cours...' : 'Payer 500 FCFA'}
+      </button>
+    </div>
+  );
+}
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 
@@ -12447,25 +12356,31 @@ export default function CandidateDashboardPage() {
         )}
       </div>
 
-      {/* Message si pas encore actif */}
-      {!isActive && profile.status !== 'SUSPENDED' && (
-        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5">
-          <div className="flex gap-3">
-            <AlertTriangle size={24} className="text-orange-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-bold text-orange-800 mb-1">Compte en attente</h3>
-              <p className="text-orange-700 text-sm leading-relaxed">
-                {profile.status === 'PENDING_PAYMENT'
-                  ? 'Votre paiement de 500 FCFA n\'a pas encore été confirmé. Si vous avez payé, attendez quelques minutes.'
-                  : 'Votre profil est en cours de validation par notre équipe. Vous serez notifié par email.'}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+	    {/* Message si pas encore actif */}
+	{!isActive && profile.status !== 'SUSPENDED' && (
+	  <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5">
+	    <div className="flex gap-3">
+	      <AlertTriangle size={24} className="text-orange-500 flex-shrink-0 mt-0.5" />
+	      <div className="flex-1">
+		<h3 className="font-bold text-orange-800 mb-1">Compte en attente</h3>
+		<p className="text-orange-700 text-sm leading-relaxed">
+		  {profile.status === 'PENDING_PAYMENT'
+		    ? 'Votre paiement de 500 FCFA n\'a pas encore été confirmé.'
+		    : 'Votre profil est en cours de validation par notre équipe.'}
+		</p>
+
+		{/* ✅ Bouton payer si PENDING_PAYMENT */}
+		{profile.status === 'PENDING_PAYMENT' && (
+		  <PaymentForm candidateId={profile.id} />
+		)}
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
+
 
 import { Link } from 'react-router-dom';
 import { Star, Heart, Trophy, Shield, Smartphone, Users } from 'lucide-react';
@@ -13084,6 +12999,12 @@ interface TopCandidate {
 
 export default function HomePage() {
   const [topCandidates, setTopCandidates] = useState<TopCandidate[]>([]);
+  
+  const [contest, setContest] = useState<any>(null);
+
+	useEffect(() => {
+	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
+	}, []);
 
   useEffect(() => {
     api.get('/leaderboard?limit=3').then((r) => {
@@ -13110,6 +13031,20 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+      
+      {/* Banner concours */}
+	{contest && (
+	  <div className={`px-4 py-3 text-center text-white text-sm font-semibold ${
+	    contest.status === 'OPEN' ? 'bg-green-600' :
+	    contest.status === 'CLOSED' ? 'bg-red-600' :
+	    contest.status === 'RESULTS_PUBLISHED' ? 'bg-yellow-500' : 'bg-gray-600'
+	  }`}>
+	    {contest.status === 'OPEN' && `🟢 ${contest.title} en cours — Prix : ${contest.prizeAmount?.toLocaleString('fr-FR')} FCFA`}
+	    {contest.status === 'CLOSED' && `🔴 ${contest.title} terminé — Résultats à venir`}
+	    {contest.status === 'RESULTS_PUBLISHED' && `🏆 Résultats de ${contest.title} disponibles !`}
+	  </div>
+	)}
+      
 
       {/* How it works */}
       <section className="px-4 py-16 bg-white">
@@ -13255,10 +13190,10 @@ export default function FeedPage() {
 
 
 // ═══════════════════════════════════════════════════════════
-// LeaderboardPage.tsx
+// LeaderboardAndResultsPages.tsx — VERSION AMÉLIORÉE
 // ═══════════════════════════════════════════════════════════
 import { useState, useEffect } from 'react';
-import { Trophy, Heart, Loader2, RefreshCw } from 'lucide-react';
+import { Trophy, Heart, Loader2, RefreshCw, Star } from 'lucide-react';
 import api from '../../services/api';
 
 interface LeaderEntry {
@@ -13267,36 +13202,150 @@ interface LeaderEntry {
   stageName: string;
   thumbnailUrl?: string;
   totalVotes: number;
-  totalAmount: number;
+}
+
+interface ContestInfo {
+  id: string;
+  title: string;
+  status: 'DRAFT' | 'OPEN' | 'CLOSED' | 'RESULTS_PUBLISHED';
+  prizeAmount: number | null;
+  prizeDescription: string | null;
+  endDate: string | null;
+  resultsPublishedAt: string | null;
 }
 
 export function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderEntry[]>([]);
+  const [contest, setContest] = useState<ContestInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    const t = setInterval(load, 30000); // Refresh every 30s
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, []);
 
   const load = async () => {
     try {
-      const res = await api.get('/leaderboard');
-      setEntries(res.data.entries || res.data.data || []);
+      const [leaderRes, contestRes] = await Promise.all([
+        api.get('/leaderboard'),
+        api.get('/contest/current').catch(() => ({ data: null })),
+      ]);
+      setEntries(leaderRes.data.entries || []);
+      setContest(contestRes.data);
     } catch {}
     finally { setLoading(false); }
   };
 
   const medals = ['🥇', '🥈', '🥉'];
 
+  const statusBanner = () => {
+    if (!contest || contest.status === 'DRAFT') return null;
+
+    if (contest.status === 'OPEN') {
+      return (
+        <div className="bg-green-500 text-white rounded-2xl p-4 mb-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                <span className="font-bold text-sm uppercase tracking-wide">Concours en cours</span>
+              </div>
+              <p className="font-bold text-lg">{contest.title}</p>
+              {contest.prizeAmount && (
+                <p className="text-green-100 text-sm mt-0.5">
+                  🏆 Prix : {contest.prizeAmount.toLocaleString('fr-FR')} FCFA
+                  {contest.prizeDescription && ` — ${contest.prizeDescription}`}
+                </p>
+              )}
+            </div>
+            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+              <Star size={24} className="text-white" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (contest.status === 'CLOSED') {
+      return (
+        <div className="bg-red-500 text-white rounded-2xl p-4 mb-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-2 h-2 bg-white rounded-full" />
+                <span className="font-bold text-sm uppercase tracking-wide">Concours terminé</span>
+              </div>
+              <p className="font-bold text-lg">{contest.title}</p>
+              {contest.prizeAmount && (
+                <p className="text-red-100 text-sm mt-0.5">
+                  🏆 Prix : {contest.prizeAmount.toLocaleString('fr-FR')} FCFA
+                </p>
+              )}
+              <p className="text-red-200 text-xs mt-1">⏳ Résultats officiels à venir...</p>
+            </div>
+            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+              <Trophy size={24} className="text-white" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (contest.status === 'RESULTS_PUBLISHED') {
+      const winner = entries[0];
+      return (
+        <div className="bg-gradient-to-br from-yellow-400 to-orange-500 text-white rounded-2xl p-5 mb-4 shadow-lg">
+          <p className="text-center text-sm font-bold uppercase tracking-wide mb-3">🏆 Résultats officiels</p>
+          <p className="text-center font-bold text-lg mb-3">{contest.title}</p>
+          {winner && (
+            <div className="bg-white/20 rounded-xl p-3 text-center mb-3">
+              <p className="text-xs text-yellow-100 mb-1">🥇 Gagnant</p>
+              {winner.thumbnailUrl ? (
+                <img src={winner.thumbnailUrl} alt={winner.stageName}
+                  className="w-16 h-16 rounded-full mx-auto border-4 border-white mb-2 object-cover" />
+              ) : (
+                <div className="w-16 h-16 rounded-full mx-auto border-4 border-white mb-2 bg-white/20 flex items-center justify-center text-2xl font-bold">
+                  {winner.stageName[0]}
+                </div>
+              )}
+              <p className="font-bold text-xl">{winner.stageName}</p>
+              <p className="text-yellow-100 text-sm">{winner.totalVotes.toLocaleString()} votes</p>
+            </div>
+          )}
+          {contest.prizeAmount && (
+            <p className="text-center font-bold text-xl">
+              💰 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA
+            </p>
+          )}
+          {contest.resultsPublishedAt && (
+            <p className="text-center text-yellow-200 text-xs mt-1">
+              Publié le {new Date(contest.resultsPublishedAt).toLocaleDateString('fr-FR')}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
+      {/* Header */}
       <div className="bg-gradient-to-br from-yellow-500 to-orange-500 text-white px-4 pt-10 pb-16">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><Trophy size={24} /> Classement</h1>
-            <p className="text-yellow-100 text-sm mt-1">Mis à jour en temps réel</p>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Trophy size={24} /> Classement
+            </h1>
+            <p className="text-yellow-100 text-sm mt-1">
+              {contest?.status === 'OPEN' 
+                ? 'Mis à jour en temps réel' 
+                : contest?.status === 'CLOSED' || contest?.status === 'RESULTS_PUBLISHED'
+                  ? 'Classement final'
+                  : 'Aucun concours en cours'}
+            </p>
           </div>
           <button onClick={load} className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
             <RefreshCw size={18} />
@@ -13306,144 +13355,91 @@ export function LeaderboardPage() {
 
       <div className="px-4 -mt-8">
         {loading ? (
-          <div className="flex justify-center pt-16"><Loader2 className="w-8 h-8 text-orange-500 animate-spin" /></div>
-        ) : entries.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
-            <Trophy size={48} className="mx-auto text-gray-300 mb-3" />
-            <p className="text-gray-600 font-medium">Aucun vote pour l'instant</p>
-            <p className="text-gray-400 text-sm mt-1">Soyez le premier à voter !</p>
+          <div className="flex justify-center pt-16">
+            <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
           </div>
         ) : (
-          <div className="space-y-3">
-            {entries.map((e, i) => (
-              <div
-                key={e.candidateId}
-                className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-4 transition ${i === 0 ? 'ring-2 ring-yellow-400' : ''}`}
-              >
-                <div className="text-2xl w-8 text-center">
-                  {i < 3 ? medals[i] : <span className="text-lg font-bold text-gray-400">#{e.rank}</span>}
-                </div>
-                {e.thumbnailUrl ? (
-                  <img src={e.thumbnailUrl} alt={e.stageName} className="w-12 h-12 rounded-full object-cover" />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-lg">
-                    {e.stageName[0]}
+          <>
+            {/* Banner statut concours */}
+            {statusBanner()}
+
+            {/* Classement */}
+            {entries.length === 0 ? (
+              <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
+                <Trophy size={48} className="mx-auto text-gray-300 mb-3" />
+                <p className="text-gray-600 font-medium">Aucun vote pour l'instant</p>
+                <p className="text-gray-400 text-sm mt-1">Soyez le premier à voter !</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {/* Label classement final si terminé */}
+                {(contest?.status === 'CLOSED' || contest?.status === 'RESULTS_PUBLISHED') && (
+                  <div className="text-center py-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Classement final
+                    </span>
                   </div>
                 )}
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-gray-900 truncate">{e.stageName}</p>
-                  <p className="text-sm text-gray-500">{e.totalAmount.toLocaleString('fr-FR')} FCFA collectés</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xl font-bold text-pink-600">{e.totalVotes.toLocaleString()}</p>
-                  <p className="text-xs text-gray-400 flex items-center gap-1 justify-end"><Heart size={10} />votes</p>
-                </div>
+
+                {entries.map((e, i) => (
+                  <div
+                    key={e.candidateId}
+                    className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-4 transition 
+                      ${i === 0 && contest?.status === 'RESULTS_PUBLISHED' ? 'ring-2 ring-yellow-400 bg-yellow-50' : ''}
+                      ${i === 0 && contest?.status === 'OPEN' ? 'ring-2 ring-yellow-400' : ''}
+                    `}
+                  >
+                    <div className="text-2xl w-8 text-center">
+                      {i < 3 ? medals[i] : <span className="text-lg font-bold text-gray-400">#{e.rank}</span>}
+                    </div>
+                    {e.thumbnailUrl ? (
+                      <img src={e.thumbnailUrl} alt={e.stageName}
+                        className="w-12 h-12 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-lg">
+                        {e.stageName[0]}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-gray-900 truncate">{e.stageName}</p>
+                      {i === 0 && contest?.status === 'RESULTS_PUBLISHED' && (
+                        <span className="text-xs text-yellow-600 font-semibold">🏆 Gagnant</span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xl font-bold text-pink-600">{e.totalVotes.toLocaleString()}</p>
+                      <p className="text-xs text-gray-400 flex items-center gap-1 justify-end">
+                        <Heart size={10} />votes
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// ResultsPage.tsx — Résultats officiels publiés par l'admin
-// ═══════════════════════════════════════════════════════════
-interface PublicResults {
-  published: boolean;
-  message?: string;
-  contest?: { title: string; endDate: string; prizeAmount: number; prizeDescription?: string; resultsPublishedAt: string };
-  winner?: { rank: number; stageName: string; thumbnailUrl?: string; totalVotes: number };
-  leaderboard?: { rank: number; stageName: string; thumbnailUrl?: string; totalVotes: number }[];
-}
-
-export function ResultsPage() {
-  const [data, setData] = useState<PublicResults | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.get('/contest/results')
-      .then((r) => setData(r.data))
-      .catch(() => setData({ published: false, message: 'Résultats non disponibles.' }))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <div className="flex justify-center pt-32"><Loader2 className="w-8 h-8 text-purple-600 animate-spin" /></div>;
-
-  if (!data?.published) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4 text-center">
-      <Trophy size={64} className="text-gray-300 mb-4" />
-      <h2 className="text-2xl font-bold text-gray-700">Résultats non encore disponibles</h2>
-      <p className="text-gray-500 mt-2">{data?.message || 'Le concours est en cours. Revenez plus tard !'}</p>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <div className="bg-gradient-to-br from-purple-700 to-pink-600 text-white text-center px-4 pt-12 pb-20">
-        <Trophy size={48} className="mx-auto mb-3 text-yellow-300" />
-        <h1 className="text-3xl font-bold">Résultats Officiels</h1>
-        {data.contest && (
-          <>
-            <p className="text-purple-200 mt-1">{data.contest.title}</p>
-            <p className="text-xs text-purple-300 mt-1">Publié le {new Date(data.contest.resultsPublishedAt).toLocaleDateString('fr-FR')}</p>
+            )}
           </>
         )}
       </div>
-
-      <div className="px-4 -mt-12 space-y-4">
-        {/* Winner */}
-        {data.winner && (
-          <div className="bg-gradient-to-br from-yellow-400 to-orange-400 rounded-3xl p-6 text-center text-white shadow-lg">
-            <p className="text-4xl mb-2">🏆</p>
-            <p className="text-lg font-bold mb-1">Gagnant du concours</p>
-            {data.winner.thumbnailUrl ? (
-              <img src={data.winner.thumbnailUrl} alt={data.winner.stageName} className="w-20 h-20 rounded-full mx-auto border-4 border-white mb-3 object-cover" />
-            ) : (
-              <div className="w-20 h-20 rounded-full mx-auto border-4 border-white mb-3 bg-white/20 flex items-center justify-center text-3xl font-bold">
-                {data.winner.stageName[0]}
-              </div>
-            )}
-            <p className="text-2xl font-bold">{data.winner.stageName}</p>
-            <p className="text-yellow-100 mt-1">{data.winner.totalVotes.toLocaleString()} votes</p>
-            {data.contest?.prizeAmount && (
-              <p className="mt-3 text-xl font-bold">{data.contest.prizeAmount.toLocaleString('fr-FR')} FCFA 💰</p>
-            )}
-          </div>
-        )}
-
-        {/* Full leaderboard */}
-        {data.leaderboard && data.leaderboard.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <h2 className="font-bold text-gray-900">Classement final</h2>
-            </div>
-            {data.leaderboard.map((e, i) => (
-              <div key={i} className="flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0">
-                <span className="font-bold text-gray-500 w-6 text-center">#{e.rank}</span>
-                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center font-bold text-purple-600">
-                  {e.stageName[0]}
-                </div>
-                <p className="flex-1 font-semibold text-gray-900">{e.stageName}</p>
-                <p className="text-pink-600 font-bold">{e.totalVotes.toLocaleString()} <span className="text-xs font-normal text-gray-400">votes</span></p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
+// ResultsPage redirige maintenant vers LeaderboardPage
+export function ResultsPage() {
+  useEffect(() => {
+    window.location.href = '/leaderboard';
+  }, []);
+  return null;
+}
 
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
+import { useNavigate, Link } from 'react-router-dom';
+import { Gift, Copy, ExternalLink } from 'lucide-react';
 
 interface ProfileForm { firstName: string; lastName: string; phone: string; email: string; }
 interface PasswordForm { currentPassword: string; newPassword: string; confirmPassword: string; }
@@ -13459,17 +13455,41 @@ export default function ProfilePage() {
     defaultValues: { firstName: user?.firstName || '', lastName: user?.lastName || '', phone: '', email: user?.email || '' },
   });
   const passwordForm = useForm<PasswordForm>();
-
-  const saveProfile = async (data: ProfileForm) => {
-    setLoading(true);
-    try {
-      await api.patch('/me', data);
-      await refreshUser();
-      toast.success('Profil mis à jour !');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Erreur.');
-    } finally { setLoading(false); }
-  };
+  
+	  // Ajoute après const passwordForm = useForm<PasswordForm>();
+	useEffect(() => {
+	  const loadProfile = async () => {
+	    try {
+	      const res = await api.get('/me');
+	      profileForm.reset({
+		firstName: res.data.firstName || '',
+		lastName: res.data.lastName || '',
+		phone: res.data.phone || '',
+		email: res.data.email || '',
+	      });
+	    } catch {}
+	  };
+	  loadProfile();
+	}, []);
+  
+	const saveProfile = async (data: ProfileForm) => {
+	  setLoading(true);
+	  try {
+	    await api.patch('/me', data);
+	    await refreshUser();
+	    // ← ajoute ces lignes pour recharger le formulaire
+	    const res = await api.get('/me');
+	    profileForm.reset({
+	      firstName: res.data.firstName || '',
+	      lastName: res.data.lastName || '',
+	      phone: res.data.phone || '',
+	      email: res.data.email || '',
+	    });
+	    toast.success('Profil mis à jour !');
+	  } catch (err: any) {
+	    toast.error(err.response?.data?.message || 'Erreur.');
+	  } finally { setLoading(false); }
+	};
 
   const changePassword = async (data: PasswordForm) => {
     if (data.newPassword !== data.confirmPassword) { toast.error('Les mots de passe ne correspondent pas.'); return; }
@@ -13494,11 +13514,19 @@ export default function ProfilePage() {
     finally { setLoading(false); }
   };
 
-  const tabs = [
-    { id: 'profile', icon: User, label: 'Profil' },
-    { id: 'password', icon: Lock, label: 'Mot de passe' },
-    { id: 'danger', icon: Trash2, label: 'Compte' },
-  ] as const;
+	 const tabs: { id: 'profile' | 'password' | 'danger'; icon: any; label: string }[] = [
+	  { id: 'profile', icon: User, label: 'Profil' },
+	  { id: 'password', icon: Lock, label: user?.googleId ? 'Définir MDP' : 'Mot de passe' },
+	  { id: 'danger', icon: Trash2, label: 'Compte' },
+	];
+	
+	const [referralStats, setReferralStats] = useState<any>(null);
+
+	// Ajoute ce useEffect :
+	useEffect(() => {
+	  api.get('/referral/stats').then(r => setReferralStats(r.data)).catch(() => {});
+	}, []);
+	
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -13515,8 +13543,83 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+      
+      
 
       <div className="px-4 -mt-6">
+      
+      {user?.role === 'USER' && (
+  <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="font-bold text-gray-900">🎬 Devenir candidat</p>
+        <p className="text-sm text-gray-500 mt-0.5">Participez au concours et gagnez des prix</p>
+      </div>
+      <Link
+        to="/become-candidate"
+        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl text-sm font-semibold hover:opacity-90 transition flex-shrink-0"
+      >
+        S'inscrire →
+      </Link>
+    </div>
+  </div>
+)}
+
+{/* ─── Section Parrainage ─── */}
+{referralStats && (
+  <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+    <div className="flex items-center gap-2 mb-3">
+      <Gift size={18} className="text-purple-600" />
+      <p className="font-bold text-gray-900">Parrainage</p>
+      <span className="ml-auto px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+        💰 {referralStats.walletBalance} FCFA
+      </span>
+    </div>
+
+    <p className="text-xs text-gray-500 mb-3">
+      Invitez vos amis et gagnez <strong>50 FCFA</strong> par inscription !
+    </p>
+
+    {/* Lien de parrainage */}
+    <div className="bg-gray-50 rounded-xl p-3 flex items-center gap-2 mb-3">
+      <p className="flex-1 text-xs text-gray-700 truncate font-mono">
+        {referralStats.referralLink}
+      </p>
+      <button
+        onClick={() => {
+          navigator.clipboard.writeText(referralStats.referralLink);
+          toast.success('Lien copié !');
+        }}
+        className="p-2 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition flex-shrink-0"
+      >
+        <Copy size={14} />
+      </button>
+    </div>
+
+    {/* Bouton WhatsApp */}
+    
+      href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! ${referralStats.referralLink}`)}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition mb-3"
+    >
+      <ExternalLink size={14} /> Partager sur WhatsApp
+    </a>
+
+    {/* Stats */}
+    <div className="grid grid-cols-2 gap-2 text-center">
+      <div className="bg-purple-50 rounded-xl p-2">
+        <p className="text-lg font-bold text-purple-700">{referralStats.totalReferrals}</p>
+        <p className="text-xs text-gray-500">Amis invités</p>
+      </div>
+      <div className="bg-green-50 rounded-xl p-2">
+        <p className="text-lg font-bold text-green-700">{referralStats.totalEarned} FCFA</p>
+        <p className="text-xs text-gray-500">Crédits gagnés</p>
+      </div>
+    </div>
+  </div>
+)}
+      
         {/* Tabs */}
         <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
           {tabs.map(({ id, icon: Icon, label }) => (
@@ -13565,24 +13668,48 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* Password Tab */}
-        {tab === 'password' && (
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <h2 className="font-bold text-gray-900 mb-4">Changer le mot de passe</h2>
-            <form onSubmit={passwordForm.handleSubmit(changePassword)} className="space-y-4">
-              {['currentPassword', 'newPassword', 'confirmPassword'].map((field, i) => (
-                <div key={field}>
-                  <label className="block text-sm text-gray-600 mb-1">{['Mot de passe actuel', 'Nouveau mot de passe', 'Confirmer le nouveau'][i]}</label>
-                  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••" {...passwordForm.register(field as any, { required: true, minLength: field !== 'currentPassword' ? 8 : 1 })} />
-                </div>
-              ))}
-              <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
-                {loading && <Loader2 size={16} className="animate-spin" />}
-                Changer le mot de passe
-              </button>
-            </form>
-          </div>
-        )}
+      {/* Password Tab */}
+	{tab === 'password' && (
+	  <div className="bg-white rounded-2xl shadow-sm p-5">
+	    <h2 className="font-bold text-gray-900 mb-4">
+	      {user?.googleId ? '🔐 Définir un mot de passe' : 'Changer le mot de passe'}
+	    </h2>
+
+	    {/* Info pour users Google */}
+	    {user?.googleId && (
+	      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
+		<p className="text-blue-700 text-sm">
+		  Votre compte utilise Google. Définissez un mot de passe pour pouvoir vous connecter aussi par email.
+		</p>
+	      </div>
+	    )}
+
+	    <form onSubmit={passwordForm.handleSubmit(changePassword)} className="space-y-4">
+	      {/* Champ mot de passe actuel — seulement si pas Google */}
+	      {!user?.googleId && (
+		<div>
+		  <label className="block text-sm text-gray-600 mb-1">Mot de passe actuel</label>
+		  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		</div>
+	      )}
+	      <div>
+		<label className="block text-sm text-gray-600 mb-1">Nouveau mot de passe</label>
+		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		  {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+	      </div>
+	      <div>
+		<label className="block text-sm text-gray-600 mb-1">Confirmer le mot de passe</label>
+		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		  {...passwordForm.register('confirmPassword', { required: true })} />
+	      </div>
+	      <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+		{loading && <Loader2 size={16} className="animate-spin" />}
+		{user?.googleId ? 'Définir mon mot de passe' : 'Changer le mot de passe'}
+	      </button>
+	    </form>
+	  </div>
+	)}
 
         {/* Danger Tab */}
         {tab === 'danger' && (
@@ -13660,6 +13787,7 @@ export default function VideoFeedPage() {
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [contest, setContest] = useState<any>(null);
 
   // ─── Chargement des candidats ─────────────────────────────────────────────
 
@@ -13685,6 +13813,10 @@ export default function VideoFeedPage() {
       setLoading(false);
     }
   };
+  
+   useEffect(() => {
+	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
+	}, []);
 
   // ─── Navigation entre vidéos ──────────────────────────────────────────────
 
@@ -13864,6 +13996,25 @@ export default function VideoFeedPage() {
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
+    
+    {/* Banner concours */}
+{contest && contest.status === 'OPEN' && (
+  <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
+    <div className="flex items-center gap-2">
+      <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+      <span className="text-sm font-bold">{contest.title}</span>
+    </div>
+    {contest.prizeAmount && (
+      <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
+    )}
+  </div>
+)}
+{contest && contest.status === 'CLOSED' && (
+  <div className="absolute top-0 left-0 right-0 z-10 bg-red-500/80 backdrop-blur-sm text-white px-4 py-2 text-center">
+    <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
+  </div>
+)}
+    
       {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
       <div className="absolute inset-0">
         {current.videoUrl ? (
@@ -14526,7 +14677,6 @@ function App() {
 
 export default App;
 
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -14560,6 +14710,17 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_URL: string;
+  readonly VITE_WS_URL: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 VITE_API_URL=http://localhost:3000/api
 VITE_WS_URL=http://localhost:3000
 
@@ -14579,56 +14740,3 @@ VITE_WS_URL=http://localhost:3000
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
-
-{
-  "name": "spotlightlover-frontend",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "axios": "^1.7.0",
-    "lucide-react": "^0.400.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-hook-form": "^7.51.0",
-    "react-hot-toast": "^2.4.1",
-    "react-router-dom": "^7.0.0",
-    "recharts": "^3.8.0",
-    "socket.io-client": "^4.7.5"
-  },
-  "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.3",
-    "typescript": "^5.4.0",
-    "vite": "^5.2.0"
-  }
-}
-
-
-export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-
-
-{
-  "files": [],
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
-  ]
-}
-
-

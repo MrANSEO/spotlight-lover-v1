@@ -44,6 +44,7 @@ export default function VideoFeedPage() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [contest, setContest] = useState<any>(null);
+  const [isLastDay, setIsLastDay] = useState(false);
 
   // ─── Chargement des candidats ─────────────────────────────────────────────
 
@@ -70,9 +71,15 @@ export default function VideoFeedPage() {
     }
   };
   
-   useEffect(() => {
-	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
-	}, []);
+  useEffect(() => {
+  api.get('/contest/current').then(r => {
+    setContest(r.data);
+    if (r.data?.endDate && r.data?.status === 'OPEN') {
+      const diff = new Date(r.data.endDate).getTime() - Date.now();
+      setIsLastDay(diff <= 24 * 60 * 60 * 1000 && diff > 0);
+    }
+  }).catch(() => {});
+}, []);
 
   // ─── Navigation entre vidéos ──────────────────────────────────────────────
 
@@ -139,6 +146,7 @@ export default function VideoFeedPage() {
         phone: voteState.phone,
         operator: voteState.operator,
         quantity: voteState.quantity,
+        bonusVotes: isLastDay ? voteState.quantity : 0,
       });
 
       const { transactionId, status } = response.data;

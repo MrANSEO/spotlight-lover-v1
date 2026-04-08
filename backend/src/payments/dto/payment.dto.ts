@@ -32,7 +32,7 @@ export enum MobileOperator {
 // plus besoin de stageName dans ce DTO
 
 export class InitiateCandidatePaymentDto {
-  @ApiProperty({ description: 'ID du candidat créé à l\'étape 1' })
+  @ApiProperty({ description: "ID du candidat créé à l'étape 1" })
   @IsString()
   candidateId: string;
 
@@ -78,6 +78,18 @@ export class InitiateVotePaymentDto {
     minimum: 1,
     maximum: 100,
   })
+
+  // ✅ Correct — ajoute @ApiProperty sur bonusVotes aussi :
+  @ApiProperty({
+    required: false,
+    description: 'Votes bonus offerts',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bonusVotes?: number;
+
   @IsOptional()
   @IsNumber()
   @IsPositive()

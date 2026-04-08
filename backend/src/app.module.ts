@@ -22,6 +22,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { SettingsModule } from './settings/settings.module';
 import { MaintenanceGuard } from './common/guards/maintenance.guard';
 import { PrismaService } from './prisma.service';
+import { ReferralModule } from './referral/referral.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { PrismaService } from './prisma.service';
     VotesModule,
     WebhooksModule,
     SettingsModule, // ✅ NOUVEAU
+    ReferralModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

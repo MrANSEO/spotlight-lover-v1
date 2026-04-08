@@ -16,6 +16,10 @@ export class RegisterDto {
   @ApiProperty({ example: 'jean@example.com' })
   @IsEmail({}, { message: 'Email invalide.' })
   email: string;
+  
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 
   @ApiProperty({ example: 'MonMotDePasse@123' })
   @IsString()
@@ -59,6 +63,8 @@ export class LoginDto {
   @IsString()
   twoFactorCode?: string;
 }
+
+
 
 // ✅ NOUVEAU
 export class ForgotPasswordDto {

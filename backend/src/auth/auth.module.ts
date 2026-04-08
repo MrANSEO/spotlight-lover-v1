@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma.service';
 import { EmailModule } from '../mails/email.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule],
+  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule,ReferralModule],
   controllers: [AuthController],
   providers: [
     AuthService,

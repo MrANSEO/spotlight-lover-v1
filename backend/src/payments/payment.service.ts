@@ -105,7 +105,7 @@ export class PaymentService {
           candidateId: candidate.id,
           userId,
           amount: registrationFee,
-          currency: 'XOF',
+          currency: 'XAF',
           status: PaymentStatus.PENDING,
           provider: 'MESOMB',
           ipAddress,
@@ -120,7 +120,7 @@ export class PaymentService {
         userId,
         type: 'REGISTRATION',
         amount: registrationFee,
-        currency: 'XOF',
+        currency: 'XAF',
         status: PaymentStatus.PENDING,
         provider: 'MESOMB',
         idempotencyKey,
@@ -304,7 +304,7 @@ export class PaymentService {
         userId: voterId,
         type: 'VOTE',
         amount: totalAmount,
-        currency: 'XOF',
+        currency: 'XAF',
         status: PaymentStatus.PENDING,
         provider: 'MESOMB',
         idempotencyKey,
@@ -320,7 +320,7 @@ export class PaymentService {
             candidateId: dto.candidateId,
             voterId,
             amount: voteAmount,
-            currency: 'XOF',
+            currency: 'XAF',
             status: PaymentStatus.PENDING,
             provider: 'MESOMB',
             transactionId: transaction.id,
@@ -354,13 +354,15 @@ export class PaymentService {
       }
 
       if (mesombResult.success) {
+        const bonusVotes = dto.bonusVotes || 0;
         await this.confirmVotes(
           votes.map((v) => v.id),
           transaction.id,
+          bonusVotes,
         );
         return {
           success: true,
-          message: `✅ ${quantity} vote(s) confirmé(s) pour ${candidate.stageName} !`,
+          message: `✅ ${quantity} vote(s) confirmé(s)${bonusVotes > 0 ? ` + ${bonusVotes} GRATUIT(S)` : ''} pour ${candidate.stageName} !`,
           voteIds: votes.map((v) => v.id),
           transactionId: transaction.id,
           amount: totalAmount,
@@ -389,11 +391,11 @@ export class PaymentService {
     }
   }
 
-  async confirmVotes(voteIds: string[], transactionId: string) {
-    this.logger.log(
-      `Confirming ${voteIds.length} vote(s) for transaction ${transactionId}`,
-    );
-
+  async confirmVotes(
+    voteIds: string[],
+    transactionId: string,
+    bonusVotes: number = 0, // ← nouveau paramètre
+  ) {
     const votes = await this.prisma.vote.findMany({
       where: { id: { in: voteIds } },
     });
@@ -401,23 +403,54 @@ export class PaymentService {
     if (votes.length === 0) return;
 
     const candidateId = votes[0].candidateId;
+    const voterId = votes[0].voterId;
     const totalVoteAmount = votes.reduce((sum, v) => sum + v.amount, 0);
 
+    // Créer les votes bonus si nécessaire
+    let bonusVoteIds: string[] = [];
+    if (bonusVotes > 0) {
+      const bonusVoteRecords = await Promise.all(
+        Array.from({ length: bonusVotes }, () =>
+          this.prisma.vote.create({
+            data: {
+              candidateId,
+              voterId,
+              amount: 0, // gratuit
+              currency: 'XAF',
+              status: PaymentStatus.COMPLETED,
+              provider: 'MESOMB',
+              transactionId,
+              isVerified: true,
+              isSuspicious: false,
+            },
+          }),
+        ),
+      );
+      bonusVoteIds = bonusVoteRecords.map((v) => v.id);
+      this.logger.log(
+        `${bonusVotes} vote(s) bonus créé(s) pour transaction ${transactionId}`,
+      );
+    }
+
+    const totalVotesCount = voteIds.length + bonusVoteIds.length;
+
     await this.prisma.$transaction([
+      // Confirmer les votes payés
       this.prisma.vote.updateMany({
         where: { id: { in: voteIds } },
         data: { status: PaymentStatus.COMPLETED, isVerified: true },
       }),
+      // Mettre à jour le leaderboard avec TOUS les votes (payés + bonus)
       this.prisma.leaderboardEntry.upsert({
         where: { candidateId },
         create: {
           candidateId,
-          totalVotes: voteIds.length,
+          totalVotes: totalVotesCount,
           totalAmount: totalVoteAmount,
           lastUpdated: new Date(),
         },
         update: {
-          totalVotes: { increment: voteIds.length },
+          totalVotes: { increment: totalVotesCount },
           totalAmount: { increment: totalVoteAmount },
           lastUpdated: new Date(),
         },
@@ -426,20 +459,17 @@ export class PaymentService {
         where: { date: this.getTodayDate() },
         create: {
           date: this.getTodayDate(),
-          totalVotes: voteIds.length,
+          totalVotes: totalVotesCount,
           totalRevenue: totalVoteAmount,
         },
         update: {
-          totalVotes: { increment: voteIds.length },
+          totalVotes: { increment: totalVotesCount },
           totalRevenue: { increment: totalVoteAmount },
         },
       }),
     ]);
 
     await this.recalculateRanks();
-    this.logger.log(
-      `Votes confirmed and leaderboard updated for candidate ${candidateId}`,
-    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -464,7 +494,7 @@ export class PaymentService {
             candidateId: dto.candidateId,
             voterId: adminId,
             amount: 0,
-            currency: 'XOF',
+            currency: 'XAF',
             status: PaymentStatus.COMPLETED,
             provider: 'MESOMB',
             isVerified: true,

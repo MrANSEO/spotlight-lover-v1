@@ -5,20 +5,25 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   constructor() {
-    const connectionString = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
-    
+    const connectionString =
+      process.env.DATABASE_URL ||
+      'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
+
     // ✅ CORRECTION : accepter les certificats auto-signés pour Render
-    const pool = new Pool({ 
+    const pool = new Pool({
       connectionString,
       ssl: {
         rejectUnauthorized: false, // ← Accepte les certificats auto-signés
       },
     });
-    
+
     const adapter = new PrismaPg(pool);
-    
+
     super({
       adapter,
       log: ['error', 'warn'],
@@ -37,9 +42,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async cleanDatabase() {
     if (process.env.NODE_ENV === 'production') return;
-    
+
     const models = Reflect.ownKeys(this).filter(
-      (key) => key[0] !== '_' && key !== 'constructor'
+      (key) => key[0] !== '_' && key !== 'constructor',
     );
 
     return Promise.all(
@@ -48,7 +53,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         if (model && typeof model === 'object' && 'deleteMany' in model) {
           return (model as any).deleteMany();
         }
-      })
+      }),
     );
   }
 }
