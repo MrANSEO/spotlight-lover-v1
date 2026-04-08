@@ -114,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string;
     firstName?: string;
     lastName?: string;
+    referralCode?: string;
   }) => {
     const res = await api.post('/auth/register', registerData);
     const data = res.data;

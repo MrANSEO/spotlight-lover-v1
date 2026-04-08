@@ -278,6 +278,11 @@ export default function VideoFeedPage() {
     <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
   </div>
 )}
+
+{/* Compte à rebours — visible uniquement dans les 24h */}
+{isLastDay && contest?.endDate && (
+  <CountdownBanner endDate={new Date(contest.endDate)} />
+)}
     
       {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
       <div className="absolute inset-0">
@@ -352,9 +357,15 @@ export default function VideoFeedPage() {
           <span className="text-white text-xs font-semibold drop-shadow">
             Voter
           </span>
-          <span className="text-white text-xs drop-shadow">
-            100 FCFA
-          </span>
+          {isLastDay ? (
+            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
+              2 votes !
+            </span>
+          ) : (
+            <span className="text-white text-xs drop-shadow">
+              100 FCFA
+            </span>
+          )}
         </button>
 
         {/* Navigation haut/bas */}
@@ -407,6 +418,18 @@ export default function VideoFeedPage() {
                 </button>
               )}
             </div>
+
+            {/* Bannière offre spéciale 24h */}
+            {isLastDay && (
+              <div className="bg-gradient-to-r from-yellow-400 to-orange-400 rounded-xl p-3 mb-4 text-center">
+                <p className="text-white font-bold text-sm">
+                  🎁 Offre spéciale — Dernières 24h !
+                </p>
+                <p className="text-yellow-100 text-xs mt-1">
+                  1 vote payé = 1 vote <strong>GRATUIT</strong> offert
+                </p>
+              </div>
+            )}
 
             {/* ─── Étape 1 : Formulaire ─────────────────────────────────── */}
             {voteState.step === 'form' && (
@@ -580,6 +603,33 @@ export default function VideoFeedPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Composant Compte à rebours ───────────────────────────────────────────────
+
+function CountdownBanner({ endDate }: { endDate: Date }) {
+  const [timeLeft, setTimeLeft] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      const diff = endDate.getTime() - Date.now();
+      if (diff <= 0) { setTimeLeft('Terminé'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${h}h ${m}m ${s}s`);
+    };
+    update();
+    const t = setInterval(update, 1000);
+    return () => clearInterval(t);
+  }, [endDate]);
+
+  return (
+    <div className="absolute top-10 left-0 right-0 z-10 bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-1.5 flex items-center justify-between">
+      <span className="text-xs font-bold">⏰ Offre spéciale — 2 votes pour 100 FCFA !</span>
+      <span className="text-xs font-bold tabular-nums">{timeLeft}</span>
     </div>
   );
 }

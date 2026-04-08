@@ -5,7 +5,7 @@
 // Ajout du bouton Google + séparateur "ou" avant le formulaire.
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Eye, EyeOff, Loader, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -53,6 +53,8 @@ function GoogleButton() {
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { register: authRegister } = useAuth();
+  const [searchParams] = useSearchParams();
+  const refCode = searchParams.get('ref') || undefined;
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailSent, setEmailSent] = useState(false);
@@ -81,6 +83,7 @@ export default function RegisterPage() {
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
+        referralCode: refCode,
       });
       setEmailSent(true);
       setTimeout(() => navigate('/feed'), 3000);
