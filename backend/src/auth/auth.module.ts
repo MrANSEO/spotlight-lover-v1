@@ -15,9 +15,16 @@ import { LocalStrategy } from './strategies/local.strategy';
 import { GoogleStrategy } from './strategies/google.strategy'; // ✅ NOUVEAU
 import { PrismaService } from '../prisma.service';
 import { EmailModule } from '../mails/email.module';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule,ReferralModule],
+  imports: [
+    PassportModule,
+    JwtModule.register({}),
+    ConfigModule,
+    EmailModule,
+    ReferralModule,
+  ],
   controllers: [AuthController],
   providers: [
     AuthService,

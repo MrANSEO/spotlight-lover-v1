@@ -162,15 +162,95 @@ export default function ProfilePage() {
       </button>
     </div>
 
-    {/* Bouton WhatsApp */}
-    <a
-      href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! ${referralStats.referralLink}`)}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition mb-3"
-    >
-      <ExternalLink size={14} /> Partager sur WhatsApp
-    </a>
+  {/* Boutons de partage */}
+
+<div className="space-y-2 mb-3">
+
+  
+
+  {/* WhatsApp */}
+
+  <a
+
+    href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! Inscris-toi ici : ${referralStats.referralLink}`)}`}
+
+    target="_blank"
+
+    rel="noopener noreferrer"
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+
+      <path d="M12 0C5.373 0 0 5.373 0 12c0 2.089.534 4.049 1.475 5.762L.057 23.5l5.91-1.395A11.935 11.935 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.885 0-3.643-.518-5.148-1.419l-.369-.219-3.816.901.963-3.67-.241-.379A9.934 9.934 0 012 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+
+    </svg>
+
+    Partager sur WhatsApp
+
+  </a>
+
+  {/* Facebook */}
+
+  <a
+
+    href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(referralStats.referralLink)}`}
+
+    target="_blank"
+
+    rel="noopener noreferrer"
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+
+    </svg>
+
+    Partager sur Facebook
+
+  </a>
+
+  {/* TikTok — pas d'API de partage direct, on copie le lien */}
+
+  <button
+
+    onClick={() => {
+
+      navigator.clipboard.writeText(
+
+        `🎬 Rejoins SpotLightLover ! Vote pour tes talents préférés 🎤🏆\n👉 ${referralStats.referralLink}`
+
+      );
+
+      toast.success('Texte copié ! Colle-le dans ta bio TikTok ou un post');
+
+    }}
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-black text-white rounded-xl text-sm font-semibold hover:bg-gray-900 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.84 1.56V6.81a4.85 4.85 0 01-1.07-.12z"/>
+
+    </svg>
+
+    Copier pour TikTok / Instagram
+
+  </button>
+
+
+
+</div>
 
     {/* Stats */}
     <div className="grid grid-cols-2 gap-2 text-center">

@@ -399,11 +399,11 @@ export default function CandidateDashboardPage() {
             <p className="text-sm text-gray-500 mt-1">Votes reçus</p>
           </div>
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
-            <div className="text-2xl mb-2">💰</div>
+            <Trophy size={28} className="text-yellow-400 mx-auto mb-2" />
             <p className="text-3xl font-bold text-purple-700">
-              {(profile.leaderboardEntry?.totalAmount || profile.totalAmount || 0).toLocaleString('fr-FR')}
+              #{profile.leaderboardEntry?.rank || '—'}
             </p>
-            <p className="text-sm text-gray-500 mt-1">FCFA générés</p>
+            <p className="text-sm text-gray-500 mt-1">Classement</p>
           </div>
         </div>
       )}
