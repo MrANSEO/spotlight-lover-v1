@@ -30,11 +30,17 @@ const getStrength = (pwd: string) => {
 
 // ─── Bouton Google (inline pour éviter les imports manquants) ─────────────────
 
-function GoogleButton() {
+function GoogleButton({ refCode }: { refCode?: string }) {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+  
+  // Passe le refCode dans le state OAuth
+  const googleUrl = refCode 
+    ? `${apiUrl}/auth/google?ref=${refCode}`
+    : `${apiUrl}/auth/google`;
+
   return (
     <a
-      href={`${apiUrl}/auth/google`}
+      href={googleUrl}
       className="flex items-center justify-center gap-3 w-full py-3 border-2 border-gray-200 rounded-2xl font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition text-sm"
     >
       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
@@ -127,7 +133,7 @@ export default function RegisterPage() {
         <div className="bg-white rounded-3xl shadow-xl p-8">
 
           {/* ✅ BOUTON GOOGLE ajouté */}
-          <GoogleButton />
+          <GoogleButton refCode={refCode} />
 
           {/* Séparateur */}
           <div className="relative flex items-center justify-center my-5">

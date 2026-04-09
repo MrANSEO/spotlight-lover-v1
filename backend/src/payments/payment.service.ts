@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../prisma.service';
 import { MeSombService } from './mesomb/mesomb.service';
 import { ConfigService } from '@nestjs/config';
+import { ReferralService } from '../referral/referral.service';
 import {
   InitiateCandidatePaymentDto,
   InitiateVotePaymentDto,
@@ -23,6 +24,7 @@ export class PaymentService {
     private prisma: PrismaService,
     private mesomb: MeSombService,
     private config: ConfigService,
+    private referralService: ReferralService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -295,6 +297,57 @@ export class PaymentService {
     }
 
     await this.checkVotingFraud(voterId, dto.candidateId, ipAddress);
+
+    // ✅ NOUVEAU — Vérifier si l'utilisateur a des crédits wallet
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId: voterId }
+    });
+
+    const walletBalance = wallet?.balance || 0;
+
+    // Si le wallet couvre tout ou partie du montant
+    if (walletBalance >= totalAmount) {
+      // Vote entièrement gratuit via crédits
+      const used = await this.referralService.debitWallet(
+        voterId, 
+        totalAmount,
+        `vote_${dto.candidateId}`
+      );
+      
+      if (used) {
+        // Créer et confirmer les votes directement sans MeSomb
+        const votes = await Promise.all(
+          Array.from({ length: quantity }, () =>
+            this.prisma.vote.create({
+              data: {
+                candidateId: dto.candidateId,
+                voterId,
+                amount: voteAmount,
+                currency: 'XAF',
+                status: PaymentStatus.COMPLETED,
+                provider: 'MESOMB',
+                isVerified: true,
+              },
+            }),
+          ),
+        );
+
+        await this.confirmVotes(
+          votes.map(v => v.id),
+          'wallet_payment',
+          dto.bonusVotes || 0,
+        );
+
+        return {
+          success: true,
+          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits !`,
+          voteIds: votes.map(v => v.id),
+          status: 'COMPLETED',
+          paidWithCredits: true,
+          creditsUsed: totalAmount,
+        };
+      }
+    }
 
     const phone = this.mesomb.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;

@@ -45,6 +45,7 @@ export default function VideoFeedPage() {
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [contest, setContest] = useState<any>(null);
   const [isLastDay, setIsLastDay] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
 
   // ─── Chargement des candidats ─────────────────────────────────────────────
 
@@ -78,6 +79,11 @@ export default function VideoFeedPage() {
       const diff = new Date(r.data.endDate).getTime() - Date.now();
       setIsLastDay(diff <= 24 * 60 * 60 * 1000 && diff > 0);
     }
+  }).catch(() => {});
+
+  // ✅ Charger le solde wallet
+  api.get('/referral/wallet').then(r => {
+    setWalletBalance(r.data.balance || 0);
   }).catch(() => {});
 }, []);
 
@@ -512,6 +518,17 @@ export default function VideoFeedPage() {
                     Après confirmation, vous recevrez une notification sur votre téléphone pour valider le paiement.
                   </p>
                 </div>
+
+                {/* ✅ Afficher le solde wallet si disponible */}
+                {walletBalance > 0 && (
+                  <div className="bg-purple-50 rounded-xl p-3 flex items-center gap-2">
+                    <span className="text-purple-600 text-sm">💰</span>
+                    <p className="text-purple-700 text-sm">
+                      Vous avez <strong>{walletBalance} FCFA</strong> de crédits — 
+                      ils seront utilisés automatiquement !
+                    </p>
+                  </div>
+                )}
 
                 {/* Bouton confirmer */}
                 <button

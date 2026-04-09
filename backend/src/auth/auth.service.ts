@@ -161,54 +161,51 @@ async register(registerDto: RegisterDto) {
     firstName: string;
     lastName: string;
     avatar?: string;
+    referralCode?: string;  // ← nouveau paramètre
   }) {
-    // Chercher d'abord par googleId
-    let user = await this.prisma.user.findUnique({
-      where: { googleId: data.googleId },
+    // Chercher un user existant par googleId ou email
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { googleId: data.googleId },
+          { email: data.email },
+        ],
+      },
     });
+
+    const isNewUser = !user;
 
     if (user) {
-      // Mettre à jour l'avatar si nécessaire
-      if (data.avatar && user.avatar !== data.avatar) {
+      // Mettre à jour le googleId si connexion email existante
+      if (!user.googleId) {
         user = await this.prisma.user.update({
           where: { id: user.id },
-          data: { avatar: data.avatar, lastLogin: new Date() },
+          data: { googleId: data.googleId, avatar: data.avatar },
         });
       }
-      return user;
-    }
-
-    // Chercher par email (compte email existant)
-    const existingByEmail = await this.prisma.user.findUnique({
-      where: { email: data.email },
-    });
-
-    if (existingByEmail) {
-      // Lier le compte Google au compte email existant
-      return this.prisma.user.update({
-        where: { id: existingByEmail.id },
+    } else {
+      // Créer le nouvel utilisateur
+      user = await this.prisma.user.create({
         data: {
           googleId: data.googleId,
+          email: data.email,
+          firstName: data.firstName,
+          lastName: data.lastName,
           avatar: data.avatar,
-          isVerified: true,   // email Google = déjà vérifié
-          lastLogin: new Date(),
+          password: '',
+          isVerified: true,  // Google vérifie l'email
+          isActive: true,
         },
       });
     }
 
-    // Créer un nouveau compte via Google
-    return this.prisma.user.create({
-      data: {
-        email: data.email,
-        password: '',          // pas de mot de passe — connexion Google
-        firstName: data.firstName,
-        lastName: data.lastName,
-        googleId: data.googleId,
-        avatar: data.avatar,
-        isVerified: true,      // Google vérifie déjà l'email
-        isActive: true,
-      },
-    });
+    // ✅ Traiter le parrainage seulement si c'est un nouvel utilisateur
+    if (isNewUser && data.referralCode) {
+      await this.referralService.processReferral(user.id, data.referralCode);
+      this.logger.log(`Google OAuth referral processed for ${user.email}`);
+    }
+
+    return user;
   }
 
   /**
