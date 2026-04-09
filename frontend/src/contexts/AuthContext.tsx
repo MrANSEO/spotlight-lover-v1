@@ -38,10 +38,10 @@ interface AuthContextType {
     password: string;
     firstName?: string;
     lastName?: string;
+    referralCode?: string;  // ← ajoute cette ligne
   }) => Promise<any>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  // ✅ NOUVEAU
   handleGoogleCallback: (accessToken: string, refreshToken: string) => Promise<void>;
 }
 
