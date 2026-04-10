@@ -159,7 +159,7 @@ export default function RegisterPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Prénom</label>
                 <input
                   {...register('firstName', { required: 'Requis' })}
-                  placeholder="Jean"
+                  placeholder="prenom"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm"
                 />
                 {errors.firstName && <p className="text-red-500 text-xs mt-1">{errors.firstName.message}</p>}
@@ -168,7 +168,7 @@ export default function RegisterPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Nom</label>
                 <input
                   {...register('lastName', { required: 'Requis' })}
-                  placeholder="Dupont"
+                  placeholder="nom"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm"
                 />
                 {errors.lastName && <p className="text-red-500 text-xs mt-1">{errors.lastName.message}</p>}

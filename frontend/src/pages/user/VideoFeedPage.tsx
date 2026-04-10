@@ -410,19 +410,21 @@ export default function VideoFeedPage() {
 
       {/* ─── Modal de vote ─────────────────────────────────────────────────── */}
       {voteState && (
-        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
-          <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
+          <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6 sticky top-0 bg-white pb-4 border-b">
               <h3 className="text-lg font-bold text-gray-900">
                 🗳️ Voter pour{' '}
                 <span className="text-purple-700">{voteState.candidateName}</span>
               </h3>
-              {(voteState.step === 'form' || voteState.step === 'success' || voteState.step === 'failed') && (
-                <button onClick={closeVoteModal} className="text-gray-400 hover:text-gray-600">
-                  <X size={24} />
-                </button>
-              )}
+              <button 
+                onClick={closeVoteModal} 
+                disabled={voteState.step === 'processing' || voteState.step === 'polling'}
+                className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <X size={24} />
+              </button>
             </div>
 
             {/* Bannière offre spéciale 24h */}
@@ -510,25 +512,6 @@ export default function VideoFeedPage() {
                     Ex : 690 000 001 (sans le 237)
                   </p>
                 </div>
-
-                {/* Info paiement */}
-                <div className="bg-blue-50 rounded-xl p-4 flex gap-3">
-                  <AlertCircle size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-blue-700 text-sm leading-relaxed">
-                    Après confirmation, vous recevrez une notification sur votre téléphone pour valider le paiement.
-                  </p>
-                </div>
-
-                {/* ✅ Afficher le solde wallet si disponible */}
-                {walletBalance > 0 && (
-                  <div className="bg-purple-50 rounded-xl p-3 flex items-center gap-2">
-                    <span className="text-purple-600 text-sm">💰</span>
-                    <p className="text-purple-700 text-sm">
-                      Vous avez <strong>{walletBalance} FCFA</strong> de crédits — 
-                      ils seront utilisés automatiquement !
-                    </p>
-                  </div>
-                )}
 
                 {/* Numéro de téléphone — masqué si crédits suffisants */}
                 {walletBalance < voteState.quantity * 100 && (
