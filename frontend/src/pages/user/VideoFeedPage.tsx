@@ -29,6 +29,7 @@ interface VoteState {
   phone: string;
   operator: 'MTN' | 'ORANGE';
   quantity: number;
+  bonusVotes: number;
   transactionId?: string;
   pollCount: number;
 }
@@ -122,6 +123,7 @@ export default function VideoFeedPage() {
       phone: '',
       operator: 'MTN',
       quantity: 1,
+      bonusVotes: 0,
       pollCount: 0,
     });
   };
@@ -137,14 +139,21 @@ export default function VideoFeedPage() {
   const submitVote = async () => {
     if (!voteState) return;
 
-    // Validation téléphone
-    const phone = voteState.phone.replace(/\D/g, '');
-    if (phone.length < 9) {
-      toast.error('Numéro de téléphone invalide.');
-      return;
+    const hasEnoughCredits = walletBalance >= voteState.quantity * 100;
+
+    // Valider le téléphone seulement si pas de crédits suffisants
+    if (!hasEnoughCredits) {
+      const phone = voteState.phone.replace(/\D/g, '');
+      if (phone.length < 9) {
+        toast.error('Numéro de téléphone invalide.');
+        return;
+      }
     }
 
-    setVoteState((s) => s ? { ...s, step: 'processing' } : null);
+    const bonusVotes = isLastDay ? voteState.quantity : 0;
+
+    // Met à jour le state avec bonusVotes calculés
+    setVoteState((s) => s ? { ...s, step: 'processing', bonusVotes } : null);
 
     try {
       const response = await api.post('/payments/vote', {
@@ -152,20 +161,20 @@ export default function VideoFeedPage() {
         phone: voteState.phone,
         operator: voteState.operator,
         quantity: voteState.quantity,
-        bonusVotes: isLastDay ? voteState.quantity : 0,
+        bonusVotes,
       });
 
       const { transactionId, status } = response.data;
 
       if (status === 'COMPLETED') {
         // Paiement confirmé immédiatement
-        handleVoteSuccess(voteState.candidateId, voteState.quantity);
+        handleVoteSuccess(voteState.candidateId, voteState.quantity, bonusVotes);
         return;
       }
 
       // Paiement en attente de confirmation Mobile Money → polling
       setVoteState((s) => s ? { ...s, step: 'polling', transactionId } : null);
-      startPolling(transactionId, voteState.candidateId, voteState.quantity);
+      startPolling(transactionId, voteState.candidateId, voteState.quantity, bonusVotes);
     } catch (error: any) {
       const msg = error.response?.data?.message || 'Erreur lors du vote. Réessayez.';
       toast.error(msg);
@@ -175,7 +184,12 @@ export default function VideoFeedPage() {
 
   // ─── ✅ Polling du statut de paiement (toutes les 3 secondes) ────────────
 
-  const startPolling = (transactionId: string, candidateId: string, quantity: number) => {
+  const startPolling = (
+    transactionId: string,
+    candidateId: string,
+    quantity: number,
+    bonusVotes: number,
+  ) => {
     let count = 0;
     const maxPolls = 20; // Max 60 secondes (20 × 3s)
 
@@ -188,7 +202,7 @@ export default function VideoFeedPage() {
 
         if (status === 'COMPLETED') {
           clearInterval(pollIntervalRef.current!);
-          handleVoteSuccess(candidateId, quantity);
+          handleVoteSuccess(candidateId, quantity, bonusVotes);
           return;
         }
 
@@ -215,13 +229,27 @@ export default function VideoFeedPage() {
     }, 3000);
   };
 
-  const handleVoteSuccess = (candidateId: string, quantity: number) => {
+  const handleVoteSuccess = (candidateId: string, quantity: number, bonusVotes: number = 0) => {
+    const totalVotes = quantity + bonusVotes;
+    
     setVoteState((s) => s ? { ...s, step: 'success' } : null);
     setVoteCounts((prev) => ({
       ...prev,
-      [candidateId]: (prev[candidateId] || 0) + quantity,
+      [candidateId]: (prev[candidateId] || 0) + totalVotes,
     }));
-    toast.success(`🎉 ${quantity} vote(s) confirmé(s) !`);
+
+    // Recharge aussi le wallet si crédits utilisés
+    if (walletBalance > 0) {
+      api.get('/referral/wallet').then(r => {
+        setWalletBalance(r.data.balance || 0);
+      }).catch(() => {});
+    }
+
+    toast.success(
+      bonusVotes > 0
+        ? `🎉 ${quantity} vote(s) + ${bonusVotes} GRATUIT(S) = ${totalVotes} votes !`
+        : `🎉 ${quantity} vote(s) confirmé(s) !`
+    );
 
     // Fermer automatiquement après 3s
     setTimeout(() => {
@@ -491,27 +519,24 @@ export default function VideoFeedPage() {
                   </div>
                 </div>
 
-                {/* Numéro de téléphone */}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Numéro Mobile Money
-                  </label>
-                  <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-4 py-3 focus-within:border-purple-500 transition">
-                    <Phone size={18} className="text-gray-400 flex-shrink-0" />
-                    <span className="text-gray-500 text-sm font-mono">+237</span>
-                    <input
-                      type="tel"
-                      placeholder="6XX XXX XXX"
-                      value={voteState.phone}
-                      onChange={(e) => setVoteState((s) => s ? { ...s, phone: e.target.value } : null)}
-                      className="flex-1 outline-none text-gray-900 font-mono text-sm"
-                      maxLength={12}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1.5">
-                    Ex : 690 000 001 (sans le 237)
+                {/* Info paiement */}
+                <div className="bg-blue-50 rounded-xl p-4 flex gap-3">
+                  <AlertCircle size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-blue-700 text-sm leading-relaxed">
+                    Après confirmation, vous recevrez une notification sur votre téléphone pour valider le paiement.
                   </p>
                 </div>
+
+                {/* ✅ Afficher le solde wallet si disponible */}
+                {walletBalance > 0 && (
+                  <div className="bg-purple-50 rounded-xl p-3 flex items-center gap-2">
+                    <span className="text-purple-600 text-sm">💰</span>
+                    <p className="text-purple-700 text-sm">
+                      Vous avez <strong>{walletBalance} FCFA</strong> de crédits — 
+                      ils seront utilisés automatiquement !
+                    </p>
+                  </div>
+                )}
 
                 {/* Numéro de téléphone — masqué si crédits suffisants */}
                 {walletBalance < voteState.quantity * 100 && (
@@ -599,11 +624,32 @@ export default function VideoFeedPage() {
                   <CheckCircle size={48} className="text-green-500" />
                 </div>
                 <h4 className="font-bold text-gray-900 text-2xl">Votes confirmés ! 🎉</h4>
-                <p className="text-gray-600">
-                  <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) attribués à{' '}
-                  <span className="font-bold">{voteState.candidateName}</span>
-                </p>
-                <p className="text-xs text-gray-400">Cette fenêtre se ferme automatiquement...</p>
+                
+                {voteState.bonusVotes > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-gray-600">
+                      <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) payé(s)
+                      {' '}+ <span className="font-bold text-green-600">{voteState.bonusVotes} GRATUIT(S)</span>
+                    </p>
+                    <p className="text-lg font-bold text-purple-700">
+                      = {voteState.quantity + voteState.bonusVotes} votes pour{' '}
+                      <span className="font-bold">{voteState.candidateName}</span> !
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-gray-600">
+                    <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) attribués à{' '}
+                    <span className="font-bold">{voteState.candidateName}</span>
+                  </p>
+                )}
+
+                <button
+                  onClick={closeVoteModal}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold hover:bg-purple-700 transition"
+                >
+                  Continuer à voter
+                </button>
+                <p className="text-xs text-gray-400">Cette fenêtre se ferme automatiquement dans 3s...</p>
               </div>
             )}
 
