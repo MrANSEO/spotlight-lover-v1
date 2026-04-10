@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
-import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
+import { User, Lock, Trash2, Loader2, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { useNavigate, Link } from 'react-router-dom';
@@ -16,6 +16,9 @@ export default function ProfilePage() {
   const [tab, setTab] = useState<'profile' | 'password' | 'danger'>('profile');
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const profileForm = useForm<ProfileForm>({
     defaultValues: { firstName: user?.firstName || '', lastName: user?.lastName || '', phone: '', email: user?.email || '' },
@@ -335,19 +338,46 @@ export default function ProfilePage() {
 	      {!user?.googleId && (
 		<div>
 		  <label className="block text-sm text-gray-600 mb-1">Mot de passe actuel</label>
-		  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		    {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		  <div className="relative flex items-center">
+		    <input type={showCurrentPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		      {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		    <button
+		      type="button"
+		      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+		      className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		    >
+		      {showCurrentPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		    </button>
+		  </div>
 		</div>
 	      )}
 	      <div>
 		<label className="block text-sm text-gray-600 mb-1">Nouveau mot de passe</label>
-		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		  {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+		<div className="relative flex items-center">
+		  <input type={showNewPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+		  <button
+		    type="button"
+		    onClick={() => setShowNewPassword(!showNewPassword)}
+		    className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		  >
+		    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		  </button>
+		</div>
 	      </div>
 	      <div>
 		<label className="block text-sm text-gray-600 mb-1">Confirmer le mot de passe</label>
-		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		  {...passwordForm.register('confirmPassword', { required: true })} />
+		<div className="relative flex items-center">
+		  <input type={showConfirmPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('confirmPassword', { required: true })} />
+		  <button
+		    type="button"
+		    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+		    className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		  >
+		    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		  </button>
+		</div>
 	      </div>
 	      <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
 		{loading && <Loader2 size={16} className="animate-spin" />}
