@@ -530,14 +530,47 @@ export default function VideoFeedPage() {
                   </div>
                 )}
 
+                {/* Numéro de téléphone — masqué si crédits suffisants */}
+                {walletBalance < voteState.quantity * 100 && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Numéro Mobile Money
+                    </label>
+                    <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-4 py-3 focus-within:border-purple-500 transition">
+                      <Phone size={18} className="text-gray-400 flex-shrink-0" />
+                      <span className="text-gray-500 text-sm font-mono">+237</span>
+                      <input
+                        type="tel"
+                        placeholder="6XX XXX XXX"
+                        value={voteState.phone}
+                        onChange={(e) => setVoteState((s) => s ? { ...s, phone: e.target.value } : null)}
+                        className="flex-1 outline-none text-gray-900 font-mono text-sm"
+                        maxLength={12}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1.5">Ex : 690 000 001 (sans le 237)</p>
+                  </div>
+                )}
+
                 {/* Bouton confirmer */}
-                <button
-                  onClick={submitVote}
-                  disabled={voteState.phone.replace(/\D/g, '').length < 9}
-                  className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Payer {voteState.quantity * 100} FCFA et voter
-                </button>
+                {(() => {
+                  const hasEnoughCredits = walletBalance >= voteState.quantity * 100;
+                  const phoneValid = voteState.phone.replace(/\D/g, '').length >= 9;
+                  const canVote = hasEnoughCredits || phoneValid;
+                  
+                  return (
+                    <button
+                      onClick={submitVote}
+                      disabled={!canVote}
+                      className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {hasEnoughCredits
+                        ? `Voter avec ${voteState.quantity * 100} FCFA de crédits`
+                        : `Payer ${voteState.quantity * 100} FCFA et voter`
+                      }
+                    </button>
+                  );
+                })()}
               </div>
             )}
 

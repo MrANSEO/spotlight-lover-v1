@@ -33,9 +33,10 @@ const getStrength = (pwd: string) => {
 function GoogleButton({ refCode }: { refCode?: string }) {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
   
-  // Passe le refCode dans le state OAuth
+  // ✅ Si ref présent → /auth/google/init qui encode le ref proprement
+  // ✅ Si pas de ref  → /auth/google normal
   const googleUrl = refCode 
-    ? `${apiUrl}/auth/google?ref=${refCode}`
+    ? `${apiUrl}/auth/google/init?ref=${refCode}`
     : `${apiUrl}/auth/google`;
 
   return (

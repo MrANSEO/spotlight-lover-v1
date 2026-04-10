@@ -13,6 +13,7 @@ import {
   Body,
   Query,
   Res,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -156,16 +157,38 @@ export class AuthController {
 
   // ─── ✅ NOUVEAU : Google OAuth ────────────────────────────────────────────
 
+  // ✅ NOUVEAU — Route intermédiaire qui encode le ref dans le state OAuth2
+  @Get('google/init')
+  async googleInit(@Query('ref') ref: string, @Res() res: any) {
+    const clientID = process.env.GOOGLE_CLIENT_ID!;
+    const callbackURL = process.env.GOOGLE_CALLBACK_URL!;
+
+    // Encoder le ref dans le state base64
+    const statePayload = ref ? { ref } : {};
+    const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
+
+    const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    googleAuthUrl.searchParams.set('client_id', clientID);
+    googleAuthUrl.searchParams.set('redirect_uri', callbackURL);
+    googleAuthUrl.searchParams.set('response_type', 'code');
+    googleAuthUrl.searchParams.set('scope', 'email profile');
+    googleAuthUrl.searchParams.set('state', state);
+    googleAuthUrl.searchParams.set('access_type', 'offline');
+
+    return res.redirect(googleAuthUrl.toString());
+  }
+
+  // Route Google originale — gardée pour compatibilité (connexion sans ref)
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Connexion via Google — redirige vers Google' })
+  @ApiOperation({ summary: 'Connexion via Google' })
   async googleAuth() {
-    // Passport gère la redirection automatiquement vers Google
+    // Passport gère la redirection
   }
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Callback Google — reçoit les données et redirige vers le frontend' })
+  @ApiOperation({ summary: 'Callback Google' })
   async googleCallback(@CurrentUser() user: any, @Res() res: any) {
     // Générer les tokens JWT pour cet utilisateur
     const tokens = await this.authService.googleLogin(user.id);

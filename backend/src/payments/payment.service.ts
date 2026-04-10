@@ -298,14 +298,14 @@ export class PaymentService {
 
     await this.checkVotingFraud(voterId, dto.candidateId, ipAddress);
 
-    // ✅ NOUVEAU — Vérifier si l'utilisateur a des crédits wallet
+    // ✅ NOUVEAU — Vérifier si l'utilisateur a des crédits wallet EN PREMIER
     const wallet = await this.prisma.wallet.findUnique({
       where: { userId: voterId }
     });
 
     const walletBalance = wallet?.balance || 0;
 
-    // Si le wallet couvre tout ou partie du montant
+    // Si le wallet couvre tout le montant
     if (walletBalance >= totalAmount) {
       // Vote entièrement gratuit via crédits
       const used = await this.referralService.debitWallet(
@@ -332,23 +332,22 @@ export class PaymentService {
           ),
         );
 
-        await this.confirmVotes(
-          votes.map(v => v.id),
-          'wallet_payment',
-          dto.bonusVotes || 0,
-        );
+        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', 0);
 
         return {
           success: true,
           message: `✅ ${quantity} vote(s) payé(s) avec vos crédits !`,
           voteIds: votes.map(v => v.id),
+          transactionId: 'wallet_payment',
           status: 'COMPLETED',
           paidWithCredits: true,
           creditsUsed: totalAmount,
+          amount: totalAmount,
         };
       }
     }
 
+    // ✅ Seulement ici on normalise le téléphone — après la vérification wallet
     const phone = this.mesomb.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;
 

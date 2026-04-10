@@ -11,6 +11,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  Logger,  // ← ajoute cet import
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -29,6 +30,8 @@ import { ReferralService } from '../referral/referral.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name); // ← ajoute cette ligne
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
