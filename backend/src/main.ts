@@ -27,6 +27,31 @@ async function bootstrap() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // ✅ HSTS — Force HTTPS en production
+      hsts: {
+        maxAge: 31536000, // 1 an
+        includeSubDomains: true,
+        preload: nodeEnv === 'production',
+      },
+      // ✅ CSP — Content Security Policy
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+          connectSrc: ["'self'"],
+          mediaSrc: ["'self'", 'https:', 'blob:'],
+          frameSrc: ["'none'"],
+        },
+      },
+      // ✅ XXssProtection — Protection XSS
+      xXssProtection: true,
+      // ✅ X-Content-Type-Options — Prévient MIME sniffing
+      noSniff: true,
+      // ✅ X-Frame-Options — Prévient clickjacking
+      frameguard: { action: 'deny' },
     }),
   );
 

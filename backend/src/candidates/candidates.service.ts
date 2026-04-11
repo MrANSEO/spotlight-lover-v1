@@ -137,8 +137,8 @@ export class CandidatesService {
 
     return {
       ...candidate,
-      totalVotes: candidate._count.votesReceived,
-      totalAmount: candidate._count.votesReceived * 100,
+      totalVotes: candidate.leaderboardEntry?.totalVotes || candidate._count.votesReceived,
+      totalAmount: candidate.leaderboardEntry?.totalAmount || 0,
     };
   }
 
