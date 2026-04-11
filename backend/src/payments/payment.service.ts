@@ -332,11 +332,12 @@ export class PaymentService {
           ),
         );
 
-        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', 0);
+        const bonusVotes = dto.bonusVotes || 0;
+        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', bonusVotes);
 
         return {
           success: true,
-          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits !`,
+          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits${bonusVotes > 0 ? ` + ${bonusVotes} GRATUIT(S)` : ''} !`,
           voteIds: votes.map(v => v.id),
           transactionId: 'wallet_payment',
           status: 'COMPLETED',

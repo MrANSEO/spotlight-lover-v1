@@ -9,6 +9,7 @@
 // Tout le reste (getLogs, getLog, retryWebhook, traitement SUCCESS/FAILED) est IDENTIQUE.
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { PaymentService } from '../payments/payment.service';
 import { MeSombService } from '../payments/mesomb/mesomb.service';
@@ -20,7 +21,8 @@ export class WebhooksService {
   constructor(
     private prisma: PrismaService,
     private paymentService: PaymentService,
-    private mesomb: MeSombService,
+    private mesombService: MeSombService,
+    private configService: ConfigService,
   ) {}
 
   // ─── Traitement du webhook MeSomb — CORRIGÉ ───────────────────────────────
@@ -154,7 +156,10 @@ export class WebhooksService {
       this.logger.error('Error processing MeSomb webhook:', error);
       await this.prisma.webhookLog.update({
         where: { id: webhookLog.id },
-        data: { isProcessed: false, processingError: error.message },
+        data: {
+          isProcessed: false,
+          processingError: this.configService.get('NODE_ENV') === 'production' ? 'Processing error' : error.message,
+        },
       });
       return { received: true, processed: false };
     }

@@ -97,7 +97,7 @@ export class CandidatesService {
         take: limit,
         include: {
           user: { select: { email: true } },
-          leaderboardEntry: { select: { totalVotes: true, rank: true } },
+          leaderboardEntry: { select: { totalVotes: true, rank: true, totalAmount: true } },
           _count: { select: { votesReceived: { where: { status: 'COMPLETED' } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -108,7 +108,7 @@ export class CandidatesService {
     return {
       data: candidates.map((c) => ({
         ...c,
-        totalVoteAmount: (c._count.votesReceived || 0) * 100,
+        totalVoteAmount: c.leaderboardEntry?.totalAmount || 0,
       })),
       pagination: {
         page,

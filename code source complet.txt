@@ -91,6 +91,50 @@ model User {
   @@index([email])
   @@index([role])
   @@index([isActive])
+
+   // ✅ AJOUT — Parrainage
+  referralCode     String?   @unique
+  referralsGiven   Referral[] @relation("ReferrerReferrals")
+  referralReceived Referral?  @relation("ReferredReferral")
+  wallet           Wallet?
+}
+
+// Ajoute dans schema.prisma après le modèle User
+
+model Referral {
+  id          String   @id @default(uuid())
+  referrerId  String
+  referrer    User     @relation("ReferrerReferrals", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredId  String   @unique
+  referred    User     @relation("ReferredReferral", fields: [referredId], references: [id], onDelete: Cascade)
+  bonusAmount Int      @default(50)
+  bonusPaid   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([referrerId])
+}
+
+model Wallet {
+  id           String              @id @default(uuid())
+  userId       String              @unique
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance      Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type        String   // REFERRAL_BONUS | VOTE_DEBIT | BONUS_VOTE
+  amount      Int
+  description String
+  referenceId String?
+  createdAt   DateTime @default(now())
+
+  @@index([walletId])
 }
 
 model Candidate {
@@ -447,6 +491,92 @@ main()
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
+
+
+import { Controller, Get, Query, UseGuards, Header } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
+import { AnalyticsService } from './analytics.service';
+import { JwtAuthGuard } from '../common/guards/auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
+
+@ApiTags('Analytics')
+@Controller('analytics')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+@ApiBearerAuth()
+export class AnalyticsController {
+  constructor(private analyticsService: AnalyticsService) {}
+
+  @Get('dashboard')
+  @ApiOperation({ summary: 'Get dashboard statistics (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Dashboard stats retrieved' })
+  getDashboardStats() {
+    return this.analyticsService.getDashboardStats();
+  }
+
+  @Get('revenue')
+  @ApiOperation({ summary: 'Get revenue by day (Admin only)' })
+  @ApiQuery({ name: 'days', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Revenue data retrieved' })
+  getRevenueByDay(@Query('days') days?: string) {
+    return this.analyticsService.getRevenueByDay(days ? parseInt(days) : 30);
+  }
+
+  @Get('votes')
+  @ApiOperation({ summary: 'Get votes by candidate (Admin only)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Vote statistics retrieved' })
+  getVotesByCandidate(@Query('limit') limit?: string) {
+    return this.analyticsService.getVotesByCandidate(
+      limit ? parseInt(limit) : 10,
+    );
+  }
+
+  @Get('payments')
+  @ApiOperation({ summary: 'Get payment statistics (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Payment stats retrieved' })
+  getPaymentStats() {
+    return this.analyticsService.getPaymentStats();
+  }
+
+  @Get('candidates')
+  @ApiOperation({ summary: 'Get candidate statistics (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Candidate stats retrieved' })
+  getCandidateStats() {
+    return this.analyticsService.getCandidateStats();
+  }
+
+  @Get('users/growth')
+  @ApiOperation({ summary: 'Get user growth statistics (Admin only)' })
+  @ApiQuery({ name: 'days', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'User growth data retrieved' })
+  getUserGrowth(@Query('days') days?: string) {
+    return this.analyticsService.getUserGrowth(days ? parseInt(days) : 30);
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export data to CSV (Admin only)' })
+  @ApiQuery({
+    name: 'type',
+    enum: ['users', 'candidates', 'votes', 'transactions'],
+  })
+  @ApiResponse({ status: 200, description: 'CSV data exported' })
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="export.csv"')
+  async exportData(
+    @Query('type') type: 'users' | 'candidates' | 'votes' | 'transactions',
+  ) {
+    return this.analyticsService.exportDataToCsv(type);
+  }
+}
 
 
 import { Module } from '@nestjs/common';
@@ -1015,6 +1145,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       callbackURL: configService.get<string>('GOOGLE_CALLBACK_URL')!,
       scope: ['email', 'profile'],
       passReqToCallback: true,
+      // ← pas de state: true ici
     });
   }
 
@@ -1027,12 +1158,26 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   ): Promise<any> {
     const { id, emails, photos, name } = profile;
 
+    // Récupère le ref depuis le state OAuth2 encodé en base64
+    let refCode: string | undefined = undefined;
+
+    try {
+      if (req.query?.state) {
+        const decoded = Buffer.from(req.query.state, 'base64').toString();
+        const stateData = JSON.parse(decoded);
+        refCode = stateData?.ref || undefined;
+      }
+    } catch {
+      // state non JSON — ignorer
+    }
+
     const user = await this.authService.findOrCreateGoogleUser({
       googleId: id,
       email: emails[0].value,
       firstName: name?.givenName || profile.displayName || 'Utilisateur',
       lastName: name?.familyName || '',
       avatar: photos?.[0]?.value,
+      referralCode: refCode,
     });
 
     done(null, user);
@@ -1182,6 +1327,7 @@ import {
   Body,
   Query,
   Res,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -1325,16 +1471,38 @@ export class AuthController {
 
   // ─── ✅ NOUVEAU : Google OAuth ────────────────────────────────────────────
 
+  // ✅ NOUVEAU — Route intermédiaire qui encode le ref dans le state OAuth2
+  @Get('google/init')
+  async googleInit(@Query('ref') ref: string, @Res() res: any) {
+    const clientID = process.env.GOOGLE_CLIENT_ID!;
+    const callbackURL = process.env.GOOGLE_CALLBACK_URL!;
+
+    // Encoder le ref dans le state base64
+    const statePayload = ref ? { ref } : {};
+    const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
+
+    const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    googleAuthUrl.searchParams.set('client_id', clientID);
+    googleAuthUrl.searchParams.set('redirect_uri', callbackURL);
+    googleAuthUrl.searchParams.set('response_type', 'code');
+    googleAuthUrl.searchParams.set('scope', 'email profile');
+    googleAuthUrl.searchParams.set('state', state);
+    googleAuthUrl.searchParams.set('access_type', 'offline');
+
+    return res.redirect(googleAuthUrl.toString());
+  }
+
+  // Route Google originale — gardée pour compatibilité (connexion sans ref)
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Connexion via Google — redirige vers Google' })
+  @ApiOperation({ summary: 'Connexion via Google' })
   async googleAuth() {
-    // Passport gère la redirection automatiquement vers Google
+    // Passport gère la redirection
   }
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Callback Google — reçoit les données et redirige vers le frontend' })
+  @ApiOperation({ summary: 'Callback Google' })
   async googleCallback(@CurrentUser() user: any, @Res() res: any) {
     // Générer les tokens JWT pour cet utilisateur
     const tokens = await this.authService.googleLogin(user.id);
@@ -1364,9 +1532,16 @@ import { LocalStrategy } from './strategies/local.strategy';
 import { GoogleStrategy } from './strategies/google.strategy'; // ✅ NOUVEAU
 import { PrismaService } from '../prisma.service';
 import { EmailModule } from '../mails/email.module';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), ConfigModule, EmailModule,ReferralModule],
+  imports: [
+    PassportModule,
+    JwtModule.register({}),
+    ConfigModule,
+    EmailModule,
+    ReferralModule,
+  ],
   controllers: [AuthController],
   providers: [
     AuthService,
@@ -1394,6 +1569,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  Logger,  // ← ajoute cet import
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -1412,6 +1588,8 @@ import { ReferralService } from '../referral/referral.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name); // ← ajoute cette ligne
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -1544,54 +1722,51 @@ async register(registerDto: RegisterDto) {
     firstName: string;
     lastName: string;
     avatar?: string;
+    referralCode?: string;  // ← nouveau paramètre
   }) {
-    // Chercher d'abord par googleId
-    let user = await this.prisma.user.findUnique({
-      where: { googleId: data.googleId },
+    // Chercher un user existant par googleId ou email
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { googleId: data.googleId },
+          { email: data.email },
+        ],
+      },
     });
+
+    const isNewUser = !user;
 
     if (user) {
-      // Mettre à jour l'avatar si nécessaire
-      if (data.avatar && user.avatar !== data.avatar) {
+      // Mettre à jour le googleId si connexion email existante
+      if (!user.googleId) {
         user = await this.prisma.user.update({
           where: { id: user.id },
-          data: { avatar: data.avatar, lastLogin: new Date() },
+          data: { googleId: data.googleId, avatar: data.avatar },
         });
       }
-      return user;
-    }
-
-    // Chercher par email (compte email existant)
-    const existingByEmail = await this.prisma.user.findUnique({
-      where: { email: data.email },
-    });
-
-    if (existingByEmail) {
-      // Lier le compte Google au compte email existant
-      return this.prisma.user.update({
-        where: { id: existingByEmail.id },
+    } else {
+      // Créer le nouvel utilisateur
+      user = await this.prisma.user.create({
         data: {
           googleId: data.googleId,
+          email: data.email,
+          firstName: data.firstName,
+          lastName: data.lastName,
           avatar: data.avatar,
-          isVerified: true,   // email Google = déjà vérifié
-          lastLogin: new Date(),
+          password: '',
+          isVerified: true,  // Google vérifie l'email
+          isActive: true,
         },
       });
     }
 
-    // Créer un nouveau compte via Google
-    return this.prisma.user.create({
-      data: {
-        email: data.email,
-        password: '',          // pas de mot de passe — connexion Google
-        firstName: data.firstName,
-        lastName: data.lastName,
-        googleId: data.googleId,
-        avatar: data.avatar,
-        isVerified: true,      // Google vérifie déjà l'email
-        isActive: true,
-      },
-    });
+    // ✅ Traiter le parrainage seulement si c'est un nouvel utilisateur
+    if (isNewUser && data.referralCode) {
+      await this.referralService.processReferral(user.id, data.referralCode);
+      this.logger.log(`Google OAuth referral processed for ${user.email}`);
+    }
+
+    return user;
   }
 
   /**
@@ -4191,7 +4366,7 @@ export enum MobileOperator {
 // plus besoin de stageName dans ce DTO
 
 export class InitiateCandidatePaymentDto {
-  @ApiProperty({ description: 'ID du candidat créé à l\'étape 1' })
+  @ApiProperty({ description: "ID du candidat créé à l'étape 1" })
   @IsString()
   candidateId: string;
 
@@ -4237,6 +4412,18 @@ export class InitiateVotePaymentDto {
     minimum: 1,
     maximum: 100,
   })
+
+  // ✅ Correct — ajoute @ApiProperty sur bonusVotes aussi :
+  @ApiProperty({
+    required: false,
+    description: 'Votes bonus offerts',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bonusVotes?: number;
+
   @IsOptional()
   @IsNumber()
   @IsPositive()
@@ -4278,6 +4465,7 @@ export class CheckTransactionDto {
   @IsString()
   transactionId: string;
 }
+
 
 // src/payments/mesomb/mesomb.service.ts — VERSION CORRIGÉE
 // Corrections TypeScript (erreurs SDK @hachther/mesomb) :
@@ -4662,9 +4850,10 @@ import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
 import { MeSombService } from './mesomb/mesomb.service';
 import { PrismaService } from '../prisma.service';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, ReferralModule],
   controllers: [PaymentController],
   providers: [PaymentService, MeSombService, PrismaService],
   exports: [PaymentService, MeSombService],
@@ -4682,6 +4871,7 @@ import {
 import { PrismaService } from '../prisma.service';
 import { MeSombService } from './mesomb/mesomb.service';
 import { ConfigService } from '@nestjs/config';
+import { ReferralService } from '../referral/referral.service';
 import {
   InitiateCandidatePaymentDto,
   InitiateVotePaymentDto,
@@ -4697,6 +4887,7 @@ export class PaymentService {
     private prisma: PrismaService,
     private mesomb: MeSombService,
     private config: ConfigService,
+    private referralService: ReferralService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -4779,7 +4970,7 @@ export class PaymentService {
           candidateId: candidate.id,
           userId,
           amount: registrationFee,
-          currency: 'XOF',
+          currency: 'XAF',
           status: PaymentStatus.PENDING,
           provider: 'MESOMB',
           ipAddress,
@@ -4794,7 +4985,7 @@ export class PaymentService {
         userId,
         type: 'REGISTRATION',
         amount: registrationFee,
-        currency: 'XOF',
+        currency: 'XAF',
         status: PaymentStatus.PENDING,
         provider: 'MESOMB',
         idempotencyKey,
@@ -4970,6 +5161,56 @@ export class PaymentService {
 
     await this.checkVotingFraud(voterId, dto.candidateId, ipAddress);
 
+    // ✅ NOUVEAU — Vérifier si l'utilisateur a des crédits wallet EN PREMIER
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId: voterId }
+    });
+
+    const walletBalance = wallet?.balance || 0;
+
+    // Si le wallet couvre tout le montant
+    if (walletBalance >= totalAmount) {
+      // Vote entièrement gratuit via crédits
+      const used = await this.referralService.debitWallet(
+        voterId, 
+        totalAmount,
+        `vote_${dto.candidateId}`
+      );
+      
+      if (used) {
+        // Créer et confirmer les votes directement sans MeSomb
+        const votes = await Promise.all(
+          Array.from({ length: quantity }, () =>
+            this.prisma.vote.create({
+              data: {
+                candidateId: dto.candidateId,
+                voterId,
+                amount: voteAmount,
+                currency: 'XAF',
+                status: PaymentStatus.COMPLETED,
+                provider: 'MESOMB',
+                isVerified: true,
+              },
+            }),
+          ),
+        );
+
+        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', 0);
+
+        return {
+          success: true,
+          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits !`,
+          voteIds: votes.map(v => v.id),
+          transactionId: 'wallet_payment',
+          status: 'COMPLETED',
+          paidWithCredits: true,
+          creditsUsed: totalAmount,
+          amount: totalAmount,
+        };
+      }
+    }
+
+    // ✅ Seulement ici on normalise le téléphone — après la vérification wallet
     const phone = this.mesomb.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;
 
@@ -4978,7 +5219,7 @@ export class PaymentService {
         userId: voterId,
         type: 'VOTE',
         amount: totalAmount,
-        currency: 'XOF',
+        currency: 'XAF',
         status: PaymentStatus.PENDING,
         provider: 'MESOMB',
         idempotencyKey,
@@ -4994,7 +5235,7 @@ export class PaymentService {
             candidateId: dto.candidateId,
             voterId,
             amount: voteAmount,
-            currency: 'XOF',
+            currency: 'XAF',
             status: PaymentStatus.PENDING,
             provider: 'MESOMB',
             transactionId: transaction.id,
@@ -5028,13 +5269,15 @@ export class PaymentService {
       }
 
       if (mesombResult.success) {
+        const bonusVotes = dto.bonusVotes || 0;
         await this.confirmVotes(
           votes.map((v) => v.id),
           transaction.id,
+          bonusVotes,
         );
         return {
           success: true,
-          message: `✅ ${quantity} vote(s) confirmé(s) pour ${candidate.stageName} !`,
+          message: `✅ ${quantity} vote(s) confirmé(s)${bonusVotes > 0 ? ` + ${bonusVotes} GRATUIT(S)` : ''} pour ${candidate.stageName} !`,
           voteIds: votes.map((v) => v.id),
           transactionId: transaction.id,
           amount: totalAmount,
@@ -5063,11 +5306,11 @@ export class PaymentService {
     }
   }
 
-  async confirmVotes(voteIds: string[], transactionId: string) {
-    this.logger.log(
-      `Confirming ${voteIds.length} vote(s) for transaction ${transactionId}`,
-    );
-
+  async confirmVotes(
+    voteIds: string[],
+    transactionId: string,
+    bonusVotes: number = 0, // ← nouveau paramètre
+  ) {
     const votes = await this.prisma.vote.findMany({
       where: { id: { in: voteIds } },
     });
@@ -5075,23 +5318,54 @@ export class PaymentService {
     if (votes.length === 0) return;
 
     const candidateId = votes[0].candidateId;
+    const voterId = votes[0].voterId;
     const totalVoteAmount = votes.reduce((sum, v) => sum + v.amount, 0);
 
+    // Créer les votes bonus si nécessaire
+    let bonusVoteIds: string[] = [];
+    if (bonusVotes > 0) {
+      const bonusVoteRecords = await Promise.all(
+        Array.from({ length: bonusVotes }, () =>
+          this.prisma.vote.create({
+            data: {
+              candidateId,
+              voterId,
+              amount: 0, // gratuit
+              currency: 'XAF',
+              status: PaymentStatus.COMPLETED,
+              provider: 'MESOMB',
+              transactionId,
+              isVerified: true,
+              isSuspicious: false,
+            },
+          }),
+        ),
+      );
+      bonusVoteIds = bonusVoteRecords.map((v) => v.id);
+      this.logger.log(
+        `${bonusVotes} vote(s) bonus créé(s) pour transaction ${transactionId}`,
+      );
+    }
+
+    const totalVotesCount = voteIds.length + bonusVoteIds.length;
+
     await this.prisma.$transaction([
+      // Confirmer les votes payés
       this.prisma.vote.updateMany({
         where: { id: { in: voteIds } },
         data: { status: PaymentStatus.COMPLETED, isVerified: true },
       }),
+      // Mettre à jour le leaderboard avec TOUS les votes (payés + bonus)
       this.prisma.leaderboardEntry.upsert({
         where: { candidateId },
         create: {
           candidateId,
-          totalVotes: voteIds.length,
+          totalVotes: totalVotesCount,
           totalAmount: totalVoteAmount,
           lastUpdated: new Date(),
         },
         update: {
-          totalVotes: { increment: voteIds.length },
+          totalVotes: { increment: totalVotesCount },
           totalAmount: { increment: totalVoteAmount },
           lastUpdated: new Date(),
         },
@@ -5100,20 +5374,17 @@ export class PaymentService {
         where: { date: this.getTodayDate() },
         create: {
           date: this.getTodayDate(),
-          totalVotes: voteIds.length,
+          totalVotes: totalVotesCount,
           totalRevenue: totalVoteAmount,
         },
         update: {
-          totalVotes: { increment: voteIds.length },
+          totalVotes: { increment: totalVotesCount },
           totalRevenue: { increment: totalVoteAmount },
         },
       }),
     ]);
 
     await this.recalculateRanks();
-    this.logger.log(
-      `Votes confirmed and leaderboard updated for candidate ${candidateId}`,
-    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -5138,7 +5409,7 @@ export class PaymentService {
             candidateId: dto.candidateId,
             voterId: adminId,
             amount: 0,
-            currency: 'XOF',
+            currency: 'XAF',
             status: PaymentStatus.COMPLETED,
             provider: 'MESOMB',
             isVerified: true,
@@ -6508,12 +6779,13 @@ export class VotesController {
 import { Module } from '@nestjs/common';
 import { VotesController } from './votes.controller';
 import { VotesService } from './votes.service';
+import { PaymentModule } from '../payments/payment.module';
 import { PrismaService } from '../prisma.service';
 
 @Module({
+  imports: [PaymentModule],
   controllers: [VotesController],
   providers: [VotesService, PrismaService],
-  exports: [VotesService],
 })
 export class VotesModule {}
 
@@ -6779,22 +7051,14 @@ import { Module } from '@nestjs/common';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { PrismaService } from '../prisma.service';
-// PaymentService est injecté pour confirmer les votes/registrations via webhook
-import { PaymentService } from '../payments/payment.service';
-import { MeSombService } from '../payments/mesomb/mesomb.service';
+import { PaymentModule } from '../payments/payment.module';
 import { ConfigModule } from '@nestjs/config';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 
 @Module({
-  imports: [ConfigModule, LeaderboardModule],
+  imports: [ConfigModule, LeaderboardModule, PaymentModule],
   controllers: [WebhooksController],
-  providers: [
-    WebhooksService,
-    WebhooksController,
-    PrismaService,
-    PaymentService,
-    MeSombService,
-  ],
+  providers: [WebhooksService, PrismaService],
   exports: [WebhooksService],
 })
 export class WebhooksModule {}
@@ -7227,20 +7491,25 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   constructor() {
-    const connectionString = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
-    
+    const connectionString =
+      process.env.DATABASE_URL ||
+      'postgresql://user:password@localhost:5432/spotlight_lover?schema=public';
+
     // ✅ CORRECTION : accepter les certificats auto-signés pour Render
-    const pool = new Pool({ 
+    const pool = new Pool({
       connectionString,
       ssl: {
         rejectUnauthorized: false, // ← Accepte les certificats auto-signés
       },
     });
-    
+
     const adapter = new PrismaPg(pool);
-    
+
     super({
       adapter,
       log: ['error', 'warn'],
@@ -7259,9 +7528,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async cleanDatabase() {
     if (process.env.NODE_ENV === 'production') return;
-    
+
     const models = Reflect.ownKeys(this).filter(
-      (key) => key[0] !== '_' && key !== 'constructor'
+      (key) => key[0] !== '_' && key !== 'constructor',
     );
 
     return Promise.all(
@@ -7270,7 +7539,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         if (model && typeof model === 'object' && 'deleteMany' in model) {
           return (model as any).deleteMany();
         }
-      })
+      }),
     );
   }
 }
@@ -7541,6 +7810,7 @@ export default defineConfig({
 
 FRONTEND
 
+
 export function MaintenancePage({ message }: { message?: string }) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
@@ -7565,7 +7835,6 @@ export function MaintenancePage({ message }: { message?: string }) {
     </div>
   );
 }
-
 
 // frontend/src/components/common/PrivateLayout.tsx — VERSION CORRIGÉE
 // Remplace intégralement ton fichier existant.
@@ -7958,6 +8227,344 @@ export default function PaymentStatusModal({
 
 
 import { useState, useEffect } from 'react';
+import { X, Share, Plus } from 'lucide-react';
+
+export default function IOSInstallBanner() {
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    // Détecte iPhone/iPad
+    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    // Détecte si déjà installé (standalone)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    // Vérifie si déjà fermé
+    const dismissed = localStorage.getItem('ios-banner-dismissed');
+
+    if (isIOS && !isStandalone && !dismissed) {
+      // Affiche après 3 secondes
+      setTimeout(() => setShow(true), 3000);
+    }
+  }, []);
+
+  const dismiss = () => {
+    setShow(false);
+    localStorage.setItem('ios-banner-dismissed', 'true');
+  };
+
+  if (!show) return null;
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pb-8">
+      <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 p-4">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-xl flex items-center justify-center">
+              <span className="text-white font-bold text-lg">SL</span>
+            </div>
+            <div>
+              <p className="font-bold text-gray-900 text-sm">Installer SpotLightLover</p>
+              <p className="text-xs text-gray-500">Accès rapide depuis votre écran d'accueil</p>
+            </div>
+          </div>
+          <button onClick={dismiss} className="text-gray-400 p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
+            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <span className="text-blue-700 font-bold text-xs">1</span>
+            </div>
+            <p className="text-sm text-gray-700">
+              Appuyez sur <span className="inline-flex items-center gap-1 font-semibold">
+                <Share size={14} className="text-blue-500" /> Partager
+              </span> en bas de Safari
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
+            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <span className="text-blue-700 font-bold text-xs">2</span>
+            </div>
+            <p className="text-sm text-gray-700">
+              Appuyez sur <span className="inline-flex items-center gap-1 font-semibold">
+                <Plus size={14} className="text-blue-500" /> Sur l'écran d'accueil
+              </span>
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 bg-green-50 rounded-xl p-3">
+            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <span className="text-green-700 font-bold text-xs">3</span>
+            </div>
+            <p className="text-sm text-gray-700">
+              Appuyez sur <span className="font-semibold text-green-700">Ajouter</span> — c'est installé !
+            </p>
+          </div>
+        </div>
+
+        <p className="text-xs text-red-500 mt-3 text-center font-medium">
+          ⚠️ Fonctionne uniquement sur Safari (pas Chrome/Firefox)
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// frontend/src/contexts/AuthContext.tsx — VERSION MISE À JOUR
+// Remplace intégralement ton fichier existant.
+//
+// AJOUTS :
+//   1. handleGoogleCallback() — stocke les tokens après auth Google
+//   2. logout() — redirige maintenant vers la page d'accueil '/' après déconnexion
+
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  type ReactNode,
+} from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface AuthUser {
+  id: string;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  role: 'USER' | 'CANDIDATE' | 'ADMIN';
+  isVerified: boolean;
+  avatar?: string | null;
+  googleId?: string | null;
+}
+
+interface AuthContextType {
+  user: AuthUser | null;
+  loading: boolean;
+  login: (email: string, password: string, twoFactorCode?: string) => Promise<any>;
+  register: (data: {
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    referralCode?: string;  // ← ajoute cette ligne
+  }) => Promise<any>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  handleGoogleCallback: (accessToken: string, refreshToken: string) => Promise<void>;
+}
+
+// ─── Contexte ────────────────────────────────────────────────────────────────
+
+const AuthContext = createContext<AuthContextType | null>(null);
+
+// ─── Provider ────────────────────────────────────────────────────────────────
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showVerifyBanner, setShowVerifyBanner] = useState(false);
+
+  // useNavigate doit être dans un composant enfant du Router.
+  // On crée un ref pour navigate qu'on remplacera dans un composant wrapper.
+  // Alternative simple : window.location.href pour le logout.
+
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      fetchProfile();
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const res = await api.get('/auth/me');
+      setUser(res.data);
+      if (res.data && !res.data.isVerified) {
+        setShowVerifyBanner(true);
+      } else {
+        setShowVerifyBanner(false);
+      }
+    } catch {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      setUser(null);
+      setShowVerifyBanner(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const login = useCallback(async (
+    email: string,
+    password: string,
+    twoFactorCode?: string,
+  ) => {
+    const res = await api.post('/auth/login', { email, password, twoFactorCode });
+    const data = res.data;
+
+    if (data.requiresTwoFactor) return data;
+
+    localStorage.setItem('accessToken', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    setUser(data.user);
+
+    if (data.user && !data.user.isVerified) {
+      setShowVerifyBanner(true);
+    }
+
+    return data;
+  }, []);
+
+  const register = useCallback(async (registerData: {
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    referralCode?: string;
+  }) => {
+    const res = await api.post('/auth/register', registerData);
+    const data = res.data;
+
+    localStorage.setItem('accessToken', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    setUser(data.user);
+
+    if (data.user && !data.user.isVerified) {
+      setShowVerifyBanner(true);
+    }
+
+    return data;
+  }, []);
+
+  // ✅ NOUVEAU : Callback après connexion Google
+  const handleGoogleCallback = useCallback(async (
+    accessToken: string,
+    refreshToken: string,
+  ) => {
+    localStorage.setItem('accessToken', accessToken);
+    localStorage.setItem('refreshToken', refreshToken);
+    // Charger le profil depuis l'API avec le nouveau token
+    await fetchProfile();
+  }, []);
+
+  // ✅ MODIFIÉ : logout redirige vers la page d'accueil
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      // Ignorer les erreurs réseau
+    } finally {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      setUser(null);
+      setShowVerifyBanner(false);
+      // Redirection vers la page d'accueil après déconnexion
+      window.location.href = '/';
+    }
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    await fetchProfile();
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      login,
+      register,
+      logout,
+      refreshUser,
+      handleGoogleCallback,
+    }}>
+      {children}
+      {user && !user.isVerified && showVerifyBanner && (
+        <EmailVerificationBanner
+          onResent={() => {}}
+          onDismiss={() => setShowVerifyBanner(false)}
+        />
+      )}
+    </AuthContext.Provider>
+  );
+}
+
+// ─── Bannière email non vérifié (inchangée) ───────────────────────────────────
+
+function EmailVerificationBanner({
+  onResent,
+  onDismiss,
+}: {
+  onResent: () => void;
+  onDismiss: () => void;
+}) {
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [countdown, setCountdown] = useState(12);
+
+  useEffect(() => {
+    const timer = setTimeout(() => onDismiss(), 12000);
+    const interval = setInterval(() => {
+      setCountdown((c) => { if (c <= 1) { clearInterval(interval); return 0; } return c - 1; });
+    }, 1000);
+    return () => { clearTimeout(timer); clearInterval(interval); };
+  }, [onDismiss]);
+
+  const resend = async () => {
+    setSending(true);
+    try {
+      await api.post('/auth/resend-verification');
+      setSent(true);
+      setTimeout(() => onDismiss(), 3000);
+    } catch { } finally { setSending(false); }
+    onResent();
+  };
+
+  return (
+    <div
+      className="fixed top-0 left-0 right-0 z-[100] bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-sm shadow-md"
+      style={{ fontSize: '13px' }}
+    >
+      <div className="flex items-center gap-3">
+        <span>⚠️ Email non vérifié.</span>
+        {sent ? (
+          <span className="font-semibold text-amber-100">✅ Email renvoyé !</span>
+        ) : (
+          <button onClick={resend} disabled={sending}
+            className="underline font-semibold hover:text-amber-200 transition disabled:opacity-60"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit' }}>
+            {sending ? 'Envoi...' : 'Renvoyer le lien'}
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-amber-200 text-xs">Ferme dans {countdown}s</span>
+        <button onClick={onDismiss} className="text-white hover:text-amber-200 font-bold text-lg leading-none"
+          style={{ background: 'none', border: 'none', cursor: 'pointer' }} aria-label="Fermer">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Hook ────────────────────────────────────────────────────────────────────
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  return ctx;
+}
+
+
+import { useState, useEffect } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend,
@@ -8282,254 +8889,288 @@ export default function AdminAnalyticsPage() {
 }
 
 
-// frontend/src/contexts/AuthContext.tsx — VERSION MISE À JOUR
-// Remplace intégralement ton fichier existant.
-//
-// AJOUTS :
-//   1. handleGoogleCallback() — stocke les tokens après auth Google
-//   2. logout() — redirige maintenant vers la page d'accueil '/' après déconnexion
+import { useState, useEffect } from 'react';
+import api from '../../services/api';
 
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  type ReactNode,
-} from 'react';
-import { useNavigate } from 'react-router-dom';
-import api from '../services/api';
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface AuthUser {
+interface AuditLog {
   id: string;
-  email: string;
-  firstName?: string | null;
-  lastName?: string | null;
-  role: 'USER' | 'CANDIDATE' | 'ADMIN';
-  isVerified: boolean;
-  avatar?: string | null;
-  googleId?: string | null;
-}
-
-interface AuthContextType {
-  user: AuthUser | null;
-  loading: boolean;
-  login: (email: string, password: string, twoFactorCode?: string) => Promise<any>;
-  register: (data: {
+  action: string;
+  entity: string;
+  entityId: string;
+  userId: string | null;
+  metadata: any;
+  ipAddress: string | null;
+  createdAt: string;
+  user?: {
     email: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-  }) => Promise<any>;
-  logout: () => Promise<void>;
-  refreshUser: () => Promise<void>;
-  // ✅ NOUVEAU
-  handleGoogleCallback: (accessToken: string, refreshToken: string) => Promise<void>;
+    role: string;
+  };
 }
 
-// ─── Contexte ────────────────────────────────────────────────────────────────
-
-const AuthContext = createContext<AuthContextType | null>(null);
-
-// ─── Provider ────────────────────────────────────────────────────────────────
-
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+export default function AdminAuditLogsPage() {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showVerifyBanner, setShowVerifyBanner] = useState(false);
-
-  // useNavigate doit être dans un composant enfant du Router.
-  // On crée un ref pour navigate qu'on remplacera dans un composant wrapper.
-  // Alternative simple : window.location.href pour le logout.
+  const [filter, setFilter] = useState({
+    action: 'ALL',
+    entity: 'ALL',
+  });
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
-    if (token) {
-      fetchProfile();
-    } else {
-      setLoading(false);
-    }
-  }, []);
+    loadLogs();
+  }, [filter]);
 
-  const fetchProfile = async () => {
+  const loadLogs = async () => {
     try {
-      const res = await api.get('/auth/me');
-      setUser(res.data);
-      if (res.data && !res.data.isVerified) {
-        setShowVerifyBanner(true);
-      } else {
-        setShowVerifyBanner(false);
-      }
-    } catch {
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      setUser(null);
-      setShowVerifyBanner(false);
+      const params = new URLSearchParams();
+      if (filter.action !== 'ALL') params.append('action', filter.action);
+      if (filter.entity !== 'ALL') params.append('entity', filter.entity);
+
+      const response = await api.get(`/audit-logs?${params.toString()}`);
+      setLogs(response.data.data || response.data);
+    } catch (error) {
+      console.error('Failed to load audit logs:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const login = useCallback(async (
-    email: string,
-    password: string,
-    twoFactorCode?: string,
-  ) => {
-    const res = await api.post('/auth/login', { email, password, twoFactorCode });
-    const data = res.data;
-
-    if (data.requiresTwoFactor) return data;
-
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    setUser(data.user);
-
-    if (data.user && !data.user.isVerified) {
-      setShowVerifyBanner(true);
-    }
-
-    return data;
-  }, []);
-
-  const register = useCallback(async (registerData: {
-    email: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-  }) => {
-    const res = await api.post('/auth/register', registerData);
-    const data = res.data;
-
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    setUser(data.user);
-
-    if (data.user && !data.user.isVerified) {
-      setShowVerifyBanner(true);
-    }
-
-    return data;
-  }, []);
-
-  // ✅ NOUVEAU : Callback après connexion Google
-  const handleGoogleCallback = useCallback(async (
-    accessToken: string,
-    refreshToken: string,
-  ) => {
-    localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
-    // Charger le profil depuis l'API avec le nouveau token
-    await fetchProfile();
-  }, []);
-
-  // ✅ MODIFIÉ : logout redirige vers la page d'accueil
-  const logout = useCallback(async () => {
-    try {
-      await api.post('/auth/logout');
-    } catch {
-      // Ignorer les erreurs réseau
-    } finally {
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      setUser(null);
-      setShowVerifyBanner(false);
-      // Redirection vers la page d'accueil après déconnexion
-      window.location.href = '/';
-    }
-  }, []);
-
-  const refreshUser = useCallback(async () => {
-    await fetchProfile();
-  }, []);
-
-  return (
-    <AuthContext.Provider value={{
-      user,
-      loading,
-      login,
-      register,
-      logout,
-      refreshUser,
-      handleGoogleCallback,
-    }}>
-      {children}
-      {user && !user.isVerified && showVerifyBanner && (
-        <EmailVerificationBanner
-          onResent={() => {}}
-          onDismiss={() => setShowVerifyBanner(false)}
-        />
-      )}
-    </AuthContext.Provider>
-  );
-}
-
-// ─── Bannière email non vérifié (inchangée) ───────────────────────────────────
-
-function EmailVerificationBanner({
-  onResent,
-  onDismiss,
-}: {
-  onResent: () => void;
-  onDismiss: () => void;
-}) {
-  const [sent, setSent] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [countdown, setCountdown] = useState(12);
-
-  useEffect(() => {
-    const timer = setTimeout(() => onDismiss(), 12000);
-    const interval = setInterval(() => {
-      setCountdown((c) => { if (c <= 1) { clearInterval(interval); return 0; } return c - 1; });
-    }, 1000);
-    return () => { clearTimeout(timer); clearInterval(interval); };
-  }, [onDismiss]);
-
-  const resend = async () => {
-    setSending(true);
-    try {
-      await api.post('/auth/resend-verification');
-      setSent(true);
-      setTimeout(() => onDismiss(), 3000);
-    } catch { } finally { setSending(false); }
-    onResent();
+  const getActionColor = (action: string) => {
+    if (action.includes('CREATE')) return 'bg-green-100 text-green-700';
+    if (action.includes('UPDATE')) return 'bg-blue-100 text-blue-700';
+    if (action.includes('DELETE')) return 'bg-red-100 text-red-700';
+    if (action.includes('APPROVE')) return 'bg-purple-100 text-purple-700';
+    if (action.includes('REJECT')) return 'bg-red-100 text-red-700';
+    return 'bg-gray-100 text-gray-700';
   };
 
-  return (
-    <div
-      className="fixed top-0 left-0 right-0 z-[100] bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-sm shadow-md"
-      style={{ fontSize: '13px' }}
-    >
-      <div className="flex items-center gap-3">
-        <span>⚠️ Email non vérifié.</span>
-        {sent ? (
-          <span className="font-semibold text-amber-100">✅ Email renvoyé !</span>
-        ) : (
-          <button onClick={resend} disabled={sending}
-            className="underline font-semibold hover:text-amber-200 transition disabled:opacity-60"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit' }}>
-            {sending ? 'Envoi...' : 'Renvoyer le lien'}
-          </button>
-        )}
+  const getActionIcon = (action: string) => {
+    if (action.includes('CREATE')) return '➕';
+    if (action.includes('UPDATE')) return '✏️';
+    if (action.includes('DELETE')) return '🗑️';
+    if (action.includes('APPROVE')) return '✅';
+    if (action.includes('REJECT')) return '❌';
+    if (action.includes('LOGIN')) return '🔑';
+    return '📝';
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-xl">Chargement des logs...</div>
       </div>
-      <div className="flex items-center gap-2">
-        <span className="text-amber-200 text-xs">Ferme dans {countdown}s</span>
-        <button onClick={onDismiss} className="text-white hover:text-amber-200 font-bold text-lg leading-none"
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }} aria-label="Fermer">
-          ✕
+    );
+  }
+
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-3xl font-bold">📋 Audit Logs</h1>
+        <button
+          onClick={loadLogs}
+          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+        >
+          🔄 Actualiser
         </button>
       </div>
+
+      {/* Filters */}
+      <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Action</label>
+            <select
+              value={filter.action}
+              onChange={(e) => setFilter({ ...filter, action: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">Toutes les actions</option>
+              <option value="USER_CREATE">Création utilisateur</option>
+              <option value="USER_UPDATE">Modification utilisateur</option>
+              <option value="USER_DELETE">Suppression utilisateur</option>
+              <option value="CANDIDATE_APPROVE">Approbation candidat</option>
+              <option value="CANDIDATE_REJECT">Rejet candidat</option>
+              <option value="VOTE_REFUND">Remboursement vote</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold mb-2">Entité</label>
+            <select
+              value={filter.entity}
+              onChange={(e) => setFilter({ ...filter, entity: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">Toutes les entités</option>
+              <option value="USER">Users</option>
+              <option value="CANDIDATE">Candidats</option>
+              <option value="VOTE">Votes</option>
+              <option value="TRANSACTION">Transactions</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid md:grid-cols-4 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-sm font-semibold text-gray-600 mb-2">Total Actions</h3>
+          <p className="text-3xl font-bold text-purple-600">{logs.length}</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-sm font-semibold text-gray-600 mb-2">Créations</h3>
+          <p className="text-3xl font-bold text-green-600">
+            {logs.filter(l => l.action.includes('CREATE')).length}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-sm font-semibold text-gray-600 mb-2">Modifications</h3>
+          <p className="text-3xl font-bold text-blue-600">
+            {logs.filter(l => l.action.includes('UPDATE')).length}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-sm font-semibold text-gray-600 mb-2">Suppressions</h3>
+          <p className="text-3xl font-bold text-red-600">
+            {logs.filter(l => l.action.includes('DELETE')).length}
+          </p>
+        </div>
+      </div>
+
+      {/* Logs Table */}
+      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="px-6 py-3 text-left text-sm font-semibold">Date/Heure</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold">Action</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold">Entité</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold">Utilisateur</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold">IP</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold">Détails</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {logs.map((log) => (
+              <tr key={log.id} className="hover:bg-gray-50">
+                <td className="px-6 py-4 text-sm text-gray-600">
+                  {new Date(log.createdAt).toLocaleString('fr-FR')}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getActionColor(log.action)}`}>
+                    {getActionIcon(log.action)} {log.action}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-sm font-mono text-gray-700">
+                  {log.entity}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  {log.user ? (
+                    <div>
+                      <p className="font-semibold">{log.user.email}</p>
+                      <p className="text-xs text-gray-500">{log.user.role}</p>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">System</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 text-sm font-mono text-gray-600">
+                  {log.ipAddress || 'N/A'}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  <button
+                    onClick={() => setSelectedLog(log)}
+                    className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                  >
+                    👁️ Voir
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {logs.length === 0 && (
+          <div className="text-center py-12 text-gray-500">
+            Aucun log trouvé avec les filtres actuels.
+          </div>
+        )}
+      </div>
+
+      {/* Log Details Modal */}
+      {selectedLog && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+          onClick={() => setSelectedLog(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">Détails du Log</h2>
+              <button 
+                onClick={() => setSelectedLog(null)}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-600">ID</label>
+                <p className="font-mono text-sm bg-gray-100 p-2 rounded">{selectedLog.id}</p>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-600">Date/Heure</label>
+                <p className="text-sm">{new Date(selectedLog.createdAt).toLocaleString('fr-FR')}</p>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-600">Action</label>
+                <p className="text-sm">
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getActionColor(selectedLog.action)}`}>
+                    {selectedLog.action}
+                  </span>
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-600">Entité</label>
+                <p className="text-sm">{selectedLog.entity} (ID: {selectedLog.entityId})</p>
+              </div>
+
+              {selectedLog.user && (
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Utilisateur</label>
+                  <p className="text-sm">{selectedLog.user.email} ({selectedLog.user.role})</p>
+                </div>
+              )}
+
+              {selectedLog.ipAddress && (
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Adresse IP</label>
+                  <p className="text-sm font-mono">{selectedLog.ipAddress}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="text-sm font-semibold text-gray-600">Métadonnées</label>
+                <pre className="text-xs bg-gray-900 text-green-400 p-4 rounded overflow-x-auto">
+                  {JSON.stringify(selectedLog.metadata, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-
-// ─── Hook ────────────────────────────────────────────────────────────────────
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
-  return ctx;
 }
 
 
@@ -11153,7 +11794,7 @@ export default function LoginPage() {
 // Ajout du bouton Google + séparateur "ou" avant le formulaire.
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Eye, EyeOff, Loader, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -11178,11 +11819,18 @@ const getStrength = (pwd: string) => {
 
 // ─── Bouton Google (inline pour éviter les imports manquants) ─────────────────
 
-function GoogleButton() {
+function GoogleButton({ refCode }: { refCode?: string }) {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+  
+  // ✅ Si ref présent → /auth/google/init qui encode le ref proprement
+  // ✅ Si pas de ref  → /auth/google normal
+  const googleUrl = refCode 
+    ? `${apiUrl}/auth/google/init?ref=${refCode}`
+    : `${apiUrl}/auth/google`;
+
   return (
     <a
-      href={`${apiUrl}/auth/google`}
+      href={googleUrl}
       className="flex items-center justify-center gap-3 w-full py-3 border-2 border-gray-200 rounded-2xl font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition text-sm"
     >
       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
@@ -11201,6 +11849,8 @@ function GoogleButton() {
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { register: authRegister } = useAuth();
+  const [searchParams] = useSearchParams();
+  const refCode = searchParams.get('ref') || undefined;
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailSent, setEmailSent] = useState(false);
@@ -11229,6 +11879,7 @@ export default function RegisterPage() {
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
+        referralCode: refCode,
       });
       setEmailSent(true);
       setTimeout(() => navigate('/feed'), 3000);
@@ -11272,7 +11923,7 @@ export default function RegisterPage() {
         <div className="bg-white rounded-3xl shadow-xl p-8">
 
           {/* ✅ BOUTON GOOGLE ajouté */}
-          <GoogleButton />
+          <GoogleButton refCode={refCode} />
 
           {/* Séparateur */}
           <div className="relative flex items-center justify-center my-5">
@@ -11297,7 +11948,7 @@ export default function RegisterPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Prénom</label>
                 <input
                   {...register('firstName', { required: 'Requis' })}
-                  placeholder="Jean"
+                  placeholder="prenom"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm"
                 />
                 {errors.firstName && <p className="text-red-500 text-xs mt-1">{errors.firstName.message}</p>}
@@ -11306,7 +11957,7 @@ export default function RegisterPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Nom</label>
                 <input
                   {...register('lastName', { required: 'Requis' })}
-                  placeholder="Dupont"
+                  placeholder="nom"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 transition text-sm"
                 />
                 {errors.lastName && <p className="text-red-500 text-xs mt-1">{errors.lastName.message}</p>}
@@ -12140,11 +12791,11 @@ export default function CandidateDashboardPage() {
             <p className="text-sm text-gray-500 mt-1">Votes reçus</p>
           </div>
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
-            <div className="text-2xl mb-2">💰</div>
+            <Trophy size={28} className="text-yellow-400 mx-auto mb-2" />
             <p className="text-3xl font-bold text-purple-700">
-              {(profile.leaderboardEntry?.totalAmount || profile.totalAmount || 0).toLocaleString('fr-FR')}
+              #{profile.leaderboardEntry?.rank || '—'}
             </p>
-            <p className="text-sm text-gray-500 mt-1">FCFA générés</p>
+            <p className="text-sm text-gray-500 mt-1">Classement</p>
           </div>
         </div>
       )}
@@ -13435,7 +14086,7 @@ export function ResultsPage() {
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
-import { User, Lock, Trash2, Loader2, ChevronRight } from 'lucide-react';
+import { User, Lock, Trash2, Loader2, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { useNavigate, Link } from 'react-router-dom';
@@ -13450,6 +14101,9 @@ export default function ProfilePage() {
   const [tab, setTab] = useState<'profile' | 'password' | 'danger'>('profile');
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const profileForm = useForm<ProfileForm>({
     defaultValues: { firstName: user?.firstName || '', lastName: user?.lastName || '', phone: '', email: user?.email || '' },
@@ -13596,15 +14250,95 @@ export default function ProfilePage() {
       </button>
     </div>
 
-    {/* Bouton WhatsApp */}
-    
-      href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! ${referralStats.referralLink}`)}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition mb-3"
-    >
-      <ExternalLink size={14} /> Partager sur WhatsApp
-    </a>
+  {/* Boutons de partage */}
+
+<div className="space-y-2 mb-3">
+
+  
+
+  {/* WhatsApp */}
+
+  <a
+
+    href={`https://wa.me/?text=${encodeURIComponent(`🎬 Rejoins SpotLightLover et vote pour tes talents préférés ! Inscris-toi ici : ${referralStats.referralLink}`)}`}
+
+    target="_blank"
+
+    rel="noopener noreferrer"
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+
+      <path d="M12 0C5.373 0 0 5.373 0 12c0 2.089.534 4.049 1.475 5.762L.057 23.5l5.91-1.395A11.935 11.935 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.885 0-3.643-.518-5.148-1.419l-.369-.219-3.816.901.963-3.67-.241-.379A9.934 9.934 0 012 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+
+    </svg>
+
+    Partager sur WhatsApp
+
+  </a>
+
+  {/* Facebook */}
+
+  <a
+
+    href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(referralStats.referralLink)}`}
+
+    target="_blank"
+
+    rel="noopener noreferrer"
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+
+    </svg>
+
+    Partager sur Facebook
+
+  </a>
+
+  {/* TikTok — pas d'API de partage direct, on copie le lien */}
+
+  <button
+
+    onClick={() => {
+
+      navigator.clipboard.writeText(
+
+        `🎬 Rejoins SpotLightLover ! Vote pour tes talents préférés 🎤🏆\n👉 ${referralStats.referralLink}`
+
+      );
+
+      toast.success('Texte copié ! Colle-le dans ta bio TikTok ou un post');
+
+    }}
+
+    className="w-full flex items-center justify-center gap-2 py-2.5 bg-black text-white rounded-xl text-sm font-semibold hover:bg-gray-900 transition"
+
+  >
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+
+      <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.84 1.56V6.81a4.85 4.85 0 01-1.07-.12z"/>
+
+    </svg>
+
+    Copier pour TikTok / Instagram
+
+  </button>
+
+
+
+</div>
 
     {/* Stats */}
     <div className="grid grid-cols-2 gap-2 text-center">
@@ -13689,19 +14423,46 @@ export default function ProfilePage() {
 	      {!user?.googleId && (
 		<div>
 		  <label className="block text-sm text-gray-600 mb-1">Mot de passe actuel</label>
-		  <input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		    {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		  <div className="relative flex items-center">
+		    <input type={showCurrentPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		      {...passwordForm.register('currentPassword', { required: !user?.googleId })} />
+		    <button
+		      type="button"
+		      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+		      className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		    >
+		      {showCurrentPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		    </button>
+		  </div>
 		</div>
 	      )}
 	      <div>
 		<label className="block text-sm text-gray-600 mb-1">Nouveau mot de passe</label>
-		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		  {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+		<div className="relative flex items-center">
+		  <input type={showNewPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('newPassword', { required: true, minLength: 8 })} />
+		  <button
+		    type="button"
+		    onClick={() => setShowNewPassword(!showNewPassword)}
+		    className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		  >
+		    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		  </button>
+		</div>
 	      </div>
 	      <div>
 		<label className="block text-sm text-gray-600 mb-1">Confirmer le mot de passe</label>
-		<input type="password" className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
-		  {...passwordForm.register('confirmPassword', { required: true })} />
+		<div className="relative flex items-center">
+		  <input type={showConfirmPassword ? 'text' : 'password'} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 text-base" placeholder="••••••••"
+		    {...passwordForm.register('confirmPassword', { required: true })} />
+		  <button
+		    type="button"
+		    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+		    className="absolute right-3 text-gray-400 hover:text-gray-600 transition"
+		  >
+		    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+		  </button>
+		</div>
 	      </div>
 	      <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
 		{loading && <Loader2 size={16} className="animate-spin" />}
@@ -13773,6 +14534,7 @@ interface VoteState {
   phone: string;
   operator: 'MTN' | 'ORANGE';
   quantity: number;
+  bonusVotes: number;
   transactionId?: string;
   pollCount: number;
 }
@@ -13788,6 +14550,8 @@ export default function VideoFeedPage() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [contest, setContest] = useState<any>(null);
+  const [isLastDay, setIsLastDay] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
 
   // ─── Chargement des candidats ─────────────────────────────────────────────
 
@@ -13814,9 +14578,20 @@ export default function VideoFeedPage() {
     }
   };
   
-   useEffect(() => {
-	  api.get('/contest/current').then(r => setContest(r.data)).catch(() => {});
-	}, []);
+  useEffect(() => {
+  api.get('/contest/current').then(r => {
+    setContest(r.data);
+    if (r.data?.endDate && r.data?.status === 'OPEN') {
+      const diff = new Date(r.data.endDate).getTime() - Date.now();
+      setIsLastDay(diff <= 24 * 60 * 60 * 1000 && diff > 0);
+    }
+  }).catch(() => {});
+
+  // ✅ Charger le solde wallet
+  api.get('/referral/wallet').then(r => {
+    setWalletBalance(r.data.balance || 0);
+  }).catch(() => {});
+}, []);
 
   // ─── Navigation entre vidéos ──────────────────────────────────────────────
 
@@ -13853,6 +14628,7 @@ export default function VideoFeedPage() {
       phone: '',
       operator: 'MTN',
       quantity: 1,
+      bonusVotes: 0,
       pollCount: 0,
     });
   };
@@ -13868,14 +14644,21 @@ export default function VideoFeedPage() {
   const submitVote = async () => {
     if (!voteState) return;
 
-    // Validation téléphone
-    const phone = voteState.phone.replace(/\D/g, '');
-    if (phone.length < 9) {
-      toast.error('Numéro de téléphone invalide.');
-      return;
+    const hasEnoughCredits = walletBalance >= voteState.quantity * 100;
+
+    // Valider le téléphone seulement si pas de crédits suffisants
+    if (!hasEnoughCredits) {
+      const phone = voteState.phone.replace(/\D/g, '');
+      if (phone.length < 9) {
+        toast.error('Numéro de téléphone invalide.');
+        return;
+      }
     }
 
-    setVoteState((s) => s ? { ...s, step: 'processing' } : null);
+    const bonusVotes = isLastDay ? voteState.quantity : 0;
+
+    // Met à jour le state avec bonusVotes calculés
+    setVoteState((s) => s ? { ...s, step: 'processing', bonusVotes } : null);
 
     try {
       const response = await api.post('/payments/vote', {
@@ -13883,19 +14666,20 @@ export default function VideoFeedPage() {
         phone: voteState.phone,
         operator: voteState.operator,
         quantity: voteState.quantity,
+        bonusVotes,
       });
 
       const { transactionId, status } = response.data;
 
       if (status === 'COMPLETED') {
         // Paiement confirmé immédiatement
-        handleVoteSuccess(voteState.candidateId, voteState.quantity);
+        handleVoteSuccess(voteState.candidateId, voteState.quantity, bonusVotes);
         return;
       }
 
       // Paiement en attente de confirmation Mobile Money → polling
       setVoteState((s) => s ? { ...s, step: 'polling', transactionId } : null);
-      startPolling(transactionId, voteState.candidateId, voteState.quantity);
+      startPolling(transactionId, voteState.candidateId, voteState.quantity, bonusVotes);
     } catch (error: any) {
       const msg = error.response?.data?.message || 'Erreur lors du vote. Réessayez.';
       toast.error(msg);
@@ -13905,7 +14689,12 @@ export default function VideoFeedPage() {
 
   // ─── ✅ Polling du statut de paiement (toutes les 3 secondes) ────────────
 
-  const startPolling = (transactionId: string, candidateId: string, quantity: number) => {
+  const startPolling = (
+    transactionId: string,
+    candidateId: string,
+    quantity: number,
+    bonusVotes: number,
+  ) => {
     let count = 0;
     const maxPolls = 20; // Max 60 secondes (20 × 3s)
 
@@ -13918,7 +14707,7 @@ export default function VideoFeedPage() {
 
         if (status === 'COMPLETED') {
           clearInterval(pollIntervalRef.current!);
-          handleVoteSuccess(candidateId, quantity);
+          handleVoteSuccess(candidateId, quantity, bonusVotes);
           return;
         }
 
@@ -13945,13 +14734,27 @@ export default function VideoFeedPage() {
     }, 3000);
   };
 
-  const handleVoteSuccess = (candidateId: string, quantity: number) => {
+  const handleVoteSuccess = (candidateId: string, quantity: number, bonusVotes: number = 0) => {
+    const totalVotes = quantity + bonusVotes;
+    
     setVoteState((s) => s ? { ...s, step: 'success' } : null);
     setVoteCounts((prev) => ({
       ...prev,
-      [candidateId]: (prev[candidateId] || 0) + quantity,
+      [candidateId]: (prev[candidateId] || 0) + totalVotes,
     }));
-    toast.success(`🎉 ${quantity} vote(s) confirmé(s) !`);
+
+    // Recharge aussi le wallet si crédits utilisés
+    if (walletBalance > 0) {
+      api.get('/referral/wallet').then(r => {
+        setWalletBalance(r.data.balance || 0);
+      }).catch(() => {});
+    }
+
+    toast.success(
+      bonusVotes > 0
+        ? `🎉 ${quantity} vote(s) + ${bonusVotes} GRATUIT(S) = ${totalVotes} votes !`
+        : `🎉 ${quantity} vote(s) confirmé(s) !`
+    );
 
     // Fermer automatiquement après 3s
     setTimeout(() => {
@@ -14013,6 +14816,11 @@ export default function VideoFeedPage() {
   <div className="absolute top-0 left-0 right-0 z-10 bg-red-500/80 backdrop-blur-sm text-white px-4 py-2 text-center">
     <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
   </div>
+)}
+
+{/* Compte à rebours — visible uniquement dans les 24h */}
+{isLastDay && contest?.endDate && (
+  <CountdownBanner endDate={new Date(contest.endDate)} />
 )}
     
       {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
@@ -14088,9 +14896,15 @@ export default function VideoFeedPage() {
           <span className="text-white text-xs font-semibold drop-shadow">
             Voter
           </span>
-          <span className="text-white text-xs drop-shadow">
-            100 FCFA
-          </span>
+          {isLastDay ? (
+            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
+              2 votes !
+            </span>
+          ) : (
+            <span className="text-white text-xs drop-shadow">
+              100 FCFA
+            </span>
+          )}
         </button>
 
         {/* Navigation haut/bas */}
@@ -14129,20 +14943,34 @@ export default function VideoFeedPage() {
 
       {/* ─── Modal de vote ─────────────────────────────────────────────────── */}
       {voteState && (
-        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
-          <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
+          <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6 sticky top-0 bg-white pb-4 border-b">
               <h3 className="text-lg font-bold text-gray-900">
                 🗳️ Voter pour{' '}
                 <span className="text-purple-700">{voteState.candidateName}</span>
               </h3>
-              {(voteState.step === 'form' || voteState.step === 'success' || voteState.step === 'failed') && (
-                <button onClick={closeVoteModal} className="text-gray-400 hover:text-gray-600">
-                  <X size={24} />
-                </button>
-              )}
+              <button 
+                onClick={closeVoteModal} 
+                disabled={voteState.step === 'processing' || voteState.step === 'polling'}
+                className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <X size={24} />
+              </button>
             </div>
+
+            {/* Bannière offre spéciale 24h */}
+            {isLastDay && (
+              <div className="bg-gradient-to-r from-yellow-400 to-orange-400 rounded-xl p-3 mb-4 text-center">
+                <p className="text-white font-bold text-sm">
+                  🎁 Offre spéciale — Dernières 24h !
+                </p>
+                <p className="text-yellow-100 text-xs mt-1">
+                  1 vote payé = 1 vote <strong>GRATUIT</strong> offert
+                </p>
+              </div>
+            )}
 
             {/* ─── Étape 1 : Formulaire ─────────────────────────────────── */}
             {voteState.step === 'form' && (
@@ -14196,28 +15024,6 @@ export default function VideoFeedPage() {
                   </div>
                 </div>
 
-                {/* Numéro de téléphone */}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Numéro Mobile Money
-                  </label>
-                  <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-4 py-3 focus-within:border-purple-500 transition">
-                    <Phone size={18} className="text-gray-400 flex-shrink-0" />
-                    <span className="text-gray-500 text-sm font-mono">+237</span>
-                    <input
-                      type="tel"
-                      placeholder="6XX XXX XXX"
-                      value={voteState.phone}
-                      onChange={(e) => setVoteState((s) => s ? { ...s, phone: e.target.value } : null)}
-                      className="flex-1 outline-none text-gray-900 font-mono text-sm"
-                      maxLength={12}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1.5">
-                    Ex : 690 000 001 (sans le 237)
-                  </p>
-                </div>
-
                 {/* Info paiement */}
                 <div className="bg-blue-50 rounded-xl p-4 flex gap-3">
                   <AlertCircle size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
@@ -14226,14 +15032,58 @@ export default function VideoFeedPage() {
                   </p>
                 </div>
 
+                {/* ✅ Afficher le solde wallet si disponible */}
+                {walletBalance > 0 && (
+                  <div className="bg-purple-50 rounded-xl p-3 flex items-center gap-2">
+                    <span className="text-purple-600 text-sm">💰</span>
+                    <p className="text-purple-700 text-sm">
+                      Vous avez <strong>{walletBalance} FCFA</strong> de crédits — 
+                      ils seront utilisés automatiquement !
+                    </p>
+                  </div>
+                )}
+
+                {/* Numéro de téléphone — masqué si crédits suffisants */}
+                {walletBalance < voteState.quantity * 100 && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Numéro Mobile Money
+                    </label>
+                    <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-4 py-3 focus-within:border-purple-500 transition">
+                      <Phone size={18} className="text-gray-400 flex-shrink-0" />
+                      <span className="text-gray-500 text-sm font-mono">+237</span>
+                      <input
+                        type="tel"
+                        placeholder="6XX XXX XXX"
+                        value={voteState.phone}
+                        onChange={(e) => setVoteState((s) => s ? { ...s, phone: e.target.value } : null)}
+                        className="flex-1 outline-none text-gray-900 font-mono text-sm"
+                        maxLength={12}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1.5">Ex : 690 000 001 (sans le 237)</p>
+                  </div>
+                )}
+
                 {/* Bouton confirmer */}
-                <button
-                  onClick={submitVote}
-                  disabled={voteState.phone.replace(/\D/g, '').length < 9}
-                  className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Payer {voteState.quantity * 100} FCFA et voter
-                </button>
+                {(() => {
+                  const hasEnoughCredits = walletBalance >= voteState.quantity * 100;
+                  const phoneValid = voteState.phone.replace(/\D/g, '').length >= 9;
+                  const canVote = hasEnoughCredits || phoneValid;
+                  
+                  return (
+                    <button
+                      onClick={submitVote}
+                      disabled={!canVote}
+                      className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {hasEnoughCredits
+                        ? `Voter avec ${voteState.quantity * 100} FCFA de crédits`
+                        : `Payer ${voteState.quantity * 100} FCFA et voter`
+                      }
+                    </button>
+                  );
+                })()}
               </div>
             )}
 
@@ -14279,11 +15129,32 @@ export default function VideoFeedPage() {
                   <CheckCircle size={48} className="text-green-500" />
                 </div>
                 <h4 className="font-bold text-gray-900 text-2xl">Votes confirmés ! 🎉</h4>
-                <p className="text-gray-600">
-                  <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) attribués à{' '}
-                  <span className="font-bold">{voteState.candidateName}</span>
-                </p>
-                <p className="text-xs text-gray-400">Cette fenêtre se ferme automatiquement...</p>
+                
+                {voteState.bonusVotes > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-gray-600">
+                      <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) payé(s)
+                      {' '}+ <span className="font-bold text-green-600">{voteState.bonusVotes} GRATUIT(S)</span>
+                    </p>
+                    <p className="text-lg font-bold text-purple-700">
+                      = {voteState.quantity + voteState.bonusVotes} votes pour{' '}
+                      <span className="font-bold">{voteState.candidateName}</span> !
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-gray-600">
+                    <span className="font-bold text-purple-700">{voteState.quantity}</span> vote(s) attribués à{' '}
+                    <span className="font-bold">{voteState.candidateName}</span>
+                  </p>
+                )}
+
+                <button
+                  onClick={closeVoteModal}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold hover:bg-purple-700 transition"
+                >
+                  Continuer à voter
+                </button>
+                <p className="text-xs text-gray-400">Cette fenêtre se ferme automatiquement dans 3s...</p>
               </div>
             )}
 
@@ -14316,6 +15187,33 @@ export default function VideoFeedPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Composant Compte à rebours ───────────────────────────────────────────────
+
+function CountdownBanner({ endDate }: { endDate: Date }) {
+  const [timeLeft, setTimeLeft] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      const diff = endDate.getTime() - Date.now();
+      if (diff <= 0) { setTimeLeft('Terminé'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${h}h ${m}m ${s}s`);
+    };
+    update();
+    const t = setInterval(update, 1000);
+    return () => clearInterval(t);
+  }, [endDate]);
+
+  return (
+    <div className="absolute top-10 left-0 right-0 z-10 bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-1.5 flex items-center justify-between">
+      <span className="text-xs font-bold">⏰ Offre spéciale — 2 votes pour 100 FCFA !</span>
+      <span className="text-xs font-bold tabular-nums">{timeLeft}</span>
     </div>
   );
 }
@@ -14495,6 +15393,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import AdminMaintenancePage from './pages/admin/AdminMaintenancePage';
 import GoogleCallbackPage from './pages/auth/GoogleCallbackPage';
+import IOSInstallBanner from './components/IOSInstallBanner';
 // ─── Layouts ─────────────────────────────────────────────────────────────────
 import PublicLayout from './components/common/PublicLayout';
 import PrivateLayout from './components/common/PrivateLayout';
@@ -14670,6 +15569,7 @@ function App() {
           {/* Catch all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <IOSInstallBanner />
       </BrowserRouter>
     </AuthProvider>
   );
@@ -14740,3 +15640,104 @@ VITE_WS_URL=http://localhost:3000
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+
+
+{
+  "name": "spotlightlover-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build && cp public/_redirects dist/_redirects",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "lucide-react": "^0.400.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-hook-form": "^7.51.0",
+    "react-hot-toast": "^2.4.1",
+    "react-router-dom": "^7.0.0",
+    "recharts": "^3.8.0",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vite-plugin-pwa": "^1.2.0"
+  }
+}
+
+
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+
+
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50:  '#f3f0ff',
+          100: '#e9e4ff',
+          500: '#7c3aed',
+          600: '#6d28d9',
+          700: '#5b21b6',
+        },
+      },
+    },
+  },
+  plugins: [],
+};
+
+
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+
+
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+
+
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

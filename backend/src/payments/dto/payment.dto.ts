@@ -84,10 +84,12 @@ export class InitiateVotePaymentDto {
     required: false,
     description: 'Votes bonus offerts',
     minimum: 0,
+    maximum: 100,
   })
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(100)
   bonusVotes?: number;
 
   @IsOptional()

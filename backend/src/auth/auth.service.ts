@@ -110,10 +110,33 @@ async register(registerDto: RegisterDto) {
       where: { email: loginDto.email },
     });
 
+    // ✅ Vérifier si le compte est verrouillé
+    if (user && user.lockedUntil && user.lockedUntil > new Date()) {
+      const minutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      throw new UnauthorizedException(`Compte verrouillé. Réessayez dans ${minutes} minute(s).`);
+    }
+
     const isPasswordValid =
       user && user.password && (await bcrypt.compare(loginDto.password, user.password));
 
     if (!user || !isPasswordValid) {
+      // ✅ Incrémenter les tentatives échouées
+      if (user) {
+        const newAttempts = (user.loginAttempts || 0) + 1;
+        const shouldLock = newAttempts >= 5; // Verrouiller après 5 tentatives
+        
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            loginAttempts: newAttempts,
+            lockedUntil: shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null, // 15 min
+          },
+        });
+
+        if (shouldLock) {
+          throw new UnauthorizedException(`Trop de tentatives échouées. Compte verrouillé pour 15 minutes.`);
+        }
+      }
       throw new UnauthorizedException('Email ou mot de passe incorrect.');
     }
 
@@ -129,9 +152,14 @@ async register(registerDto: RegisterDto) {
       if (!isValid) throw new UnauthorizedException('Code 2FA invalide.');
     }
 
+    // ✅ Login réussi — réinitialiser les tentatives et verrouillage
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { lastLogin: new Date() },
+      data: {
+        loginAttempts: 0,
+        lockedUntil: null,
+        lastLogin: new Date(),
+      },
     });
 
     const tokens = await this.generateTokens(user.id, user.email, user.role);

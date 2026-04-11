@@ -7,11 +7,13 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LeaderboardService } from './leaderboard.service';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173'],
+    credentials: true,
   },
   namespace: '/leaderboard',
 })
@@ -21,7 +23,10 @@ export class LeaderboardGateway implements OnGatewayConnection, OnGatewayDisconn
 
   private readonly logger = new Logger(LeaderboardGateway.name);
 
-  constructor(private leaderboardService: LeaderboardService) {}
+  constructor(
+    private leaderboardService: LeaderboardService,
+    private configService: ConfigService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);

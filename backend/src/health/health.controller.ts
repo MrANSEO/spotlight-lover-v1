@@ -1,11 +1,15 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Health check endpoint' })
@@ -25,7 +29,7 @@ export class HealthController {
         status: 'error',
         timestamp: new Date().toISOString(),
         database: 'disconnected',
-        error: error.message,
+        error: this.configService.get('NODE_ENV') === 'production' ? 'Database error' : (error as any).message,
       };
     }
   }
