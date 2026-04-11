@@ -40,7 +40,7 @@ export class WebhooksService {
     if (signature && mesombDate && mesombNonce) {
       // ✅ Vraie vérification (remplace isValid: true hardcodé)
       const rawPayload = JSON.stringify(payload);
-      isValid = this.mesomb.verifyWebhookSignature(
+      isValid = this.mesombService.verifyWebhookSignature(
         rawPayload,
         signature,
         mesombDate,
