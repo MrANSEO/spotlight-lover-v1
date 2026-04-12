@@ -37,11 +37,11 @@ export class InitiateCandidatePaymentDto {
   candidateId: string;
 
   @ApiProperty({
-    description: 'Numéro Mobile Money (format: 237XXXXXXXXX ou 6XXXXXXXX)',
+    description: 'Numéro Mobile Money (format: 237XXXXXXXXX ou 6XXXXXXXXX)',
     example: '237690000001',
   })
   @IsString()
-  @Matches(/^(237)?[0-9]{9}$/, {
+  @Matches(/^(237)?6[0-9]{8}$/, {
     message: 'Numéro invalide. Format: 237690000001 ou 690000001',
   })
   phone: string;
@@ -65,7 +65,7 @@ export class InitiateVotePaymentDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^(237)?[0-9]{9}$/, {
+  @Matches(/^(237)?6[0-9]{8}$/, {
     message: 'Numéro invalide. Format: 237690000001 ou 690000001',
   })
   phone?: string;
