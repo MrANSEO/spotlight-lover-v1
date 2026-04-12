@@ -349,6 +349,10 @@ export class PaymentService {
     }
 
     // ✅ Seulement ici on normalise le téléphone — après la vérification wallet
+    // ✅ ET seulement s'il est fourni (optionnel si wallet couvre)
+    if (!dto.phone) {
+      throw new BadRequestException('Numéro de téléphone requis pour ce paiement.');
+    }
     const phone = this.mesomb.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;
 

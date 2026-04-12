@@ -158,7 +158,7 @@ export default function VideoFeedPage() {
     try {
       const response = await api.post('/payments/vote', {
         candidateId: voteState.candidateId,
-        phone: voteState.phone,
+        phone: voteState.phone || '000000000', // ← Valeur par défaut si wallet couvre
         operator: voteState.operator,
         quantity: voteState.quantity,
         bonusVotes,

@@ -59,14 +59,16 @@ export class InitiateVotePaymentDto {
   candidateId: string;
 
   @ApiProperty({
-    description: 'Numéro Mobile Money du votant',
+    required: false,
+    description: 'Numéro Mobile Money du votant (optionnel si portefeuille suffisant)',
     example: '237690000001',
   })
+  @IsOptional()
   @IsString()
   @Matches(/^(237)?[0-9]{9}$/, {
     message: 'Numéro invalide. Format: 237690000001 ou 690000001',
   })
-  phone: string;
+  phone?: string;
 
   @ApiProperty({ enum: MobileOperator })
   @IsEnum(MobileOperator)
