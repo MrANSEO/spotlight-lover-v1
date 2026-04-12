@@ -65,9 +65,7 @@ export class InitiateVotePaymentDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^(237)?6[0-9]{8}$/, {
-    message: 'Numéro invalide. Format: 237690000001 ou 690000001',
-  })
+  // ✅ Pas de @Matches ici — la validation se fera côté service via normalizePhoneNumber
   phone?: string;
 
   @ApiProperty({ enum: MobileOperator })
