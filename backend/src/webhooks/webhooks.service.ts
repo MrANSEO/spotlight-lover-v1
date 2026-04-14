@@ -165,6 +165,112 @@ export class WebhooksService {
     }
   }
 
+  // ─── Traitement du webhook PayUnit ──────────────────────────────────────
+
+  async processPayunitWebhook(payload: any) {
+    this.logger.log(`Processing PayUnit webhook: ${JSON.stringify(payload)}`);
+
+    // Créer un log webhook
+    const webhookLog = await this.prisma.webhookLog.create({
+      data: {
+        provider: 'PAYUNIT',
+        event: payload.status || 'UNKNOWN',
+        payload: payload as any,
+        isProcessed: false,
+      },
+    });
+
+    try {
+      const transactionId = payload.transaction_id as string;
+      const status = payload.status as string;
+
+      if (!transactionId) {
+        this.logger.warn('PayUnit webhook missing transaction_id');
+        return { received: true, processed: false };
+      }
+
+      // Retrouver la transaction en base
+      const transaction = await this.prisma.transaction.findFirst({
+        where: { providerReference: transactionId },
+        include: { votes: { select: { id: true } } },
+      });
+
+      if (!transaction) {
+        this.logger.warn(
+          `Transaction not found for PayUnit ID: ${transactionId}`,
+        );
+        return { received: true, processed: false };
+      }
+
+      // Traiter selon le statut
+      if (status === 'SUCCESS' && transaction.status !== 'COMPLETED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'COMPLETED',
+            webhookReceived: true,
+            webhookData: payload as any,
+          },
+        });
+
+        if (transaction.type === 'VOTE' && transaction.votes.length > 0) {
+          await this.paymentService.confirmVotes(
+            transaction.votes.map((v) => v.id),
+            transaction.id,
+          );
+          this.logger.log(
+            `Votes confirmed via PayUnit webhook: ${transaction.id}`,
+          );
+        } else if (transaction.type === 'REGISTRATION') {
+          // Activer le candidat
+          const regPayment =
+            await this.prisma.candidateRegistrationPayment.findFirst({
+              where: { userId: transaction.userId },
+              include: { candidate: true },
+            });
+          if (regPayment?.candidate) {
+            await this.paymentService.activateCandidate(
+              regPayment.candidate.id,
+              transaction.userId,
+            );
+            this.logger.log(
+              `Candidate ${regPayment.candidate.id} activated via PayUnit webhook`,
+            );
+          }
+        }
+      } else if (status === 'FAILED' && transaction.status !== 'FAILED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'FAILED',
+            webhookReceived: true,
+            webhookData: payload as any,
+          },
+        });
+      }
+
+      await this.prisma.webhookLog.update({
+        where: { id: webhookLog.id },
+        data: { isProcessed: true },
+      });
+
+      return { received: true, processed: true };
+    } catch (error: any) {
+      this.logger.error('Error processing PayUnit webhook:', error);
+      await this.prisma.webhookLog.update({
+        where: { id: webhookLog.id },
+        data: {
+          isProcessed: false,
+          processingError:
+            this.configService.get('NODE_ENV') === 'production'
+              ? 'Processing error'
+              : error.message,
+        },
+      });
+      return { received: true, processed: false };
+    }
+  }
+
   // ─── getLogs (inchangé) ──────────────────────────────────────────────────
 
   async getLogs(params: {

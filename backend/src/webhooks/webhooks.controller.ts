@@ -45,6 +45,14 @@ export class WebhooksController {
     );
   }
 
+  @Post('payunit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Webhook PayUnit — callback de paiement (public)' })
+  payunitWebhook(@Body() payload: any) {
+    this.logger.log(`PayUnit webhook received: ${JSON.stringify(payload)}`);
+    return this.webhooksService.processPayunitWebhook(payload);
+  }
+
   // ─── Logs webhooks (Admin) ────────────────────────────────────────────────
 
   @Get('logs')

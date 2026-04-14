@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { MeSombService } from './mesomb/mesomb.service';
+import { PayunitService } from './payunit/payunit.service';
 import { ConfigService } from '@nestjs/config';
 import { ReferralService } from '../referral/referral.service';
 import {
@@ -22,7 +22,7 @@ export class PaymentService {
 
   constructor(
     private prisma: PrismaService,
-    private mesomb: MeSombService,
+    private payunit: PayunitService,
     private config: ConfigService,
     private referralService: ReferralService,
   ) {}
@@ -85,7 +85,7 @@ export class PaymentService {
     );
 
     // Normaliser le numéro de téléphone
-    const phone = this.mesomb.normalizePhoneNumber(dto.phone);
+    const phone = this.payunit.normalizePhoneNumber(dto.phone);
 
     // Générer une clé d'idempotence unique
     const idempotencyKey = `reg_${userId}_${Date.now()}`;
@@ -131,24 +131,21 @@ export class PaymentService {
       },
     });
 
-    // Appeler MeSomb pour déclencher le paiement
+    // Appeler PayUnit pour déclencher le paiement
     try {
-      const mesombResult = await this.mesomb.initiatePayment({
+      const payunitResult = await this.payunit.initiatePayment({
         amount: registrationFee,
-        service: dto.operator,
-        payer: phone,
-        nonce: idempotencyKey,
+        phone,
         message: `SpotLightLover - Inscription candidat: ${candidate.stageName}`,
       });
 
-      // Mettre à jour avec la référence MeSomb
-      if (mesombResult.transaction?.pk) {
+      // Mettre à jour avec la référence PayUnit
+      if (payunitResult.transactionId) {
         await this.prisma.transaction.update({
           where: { id: transaction.id },
           data: {
-            providerReference: mesombResult.transaction.pk,
-            providerResponse: mesombResult.transaction as any,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
@@ -158,8 +155,8 @@ export class PaymentService {
           where: { id: paymentRecord.id },
           data: {
             transactionId: transaction.id,
-            providerReference: mesombResult.transaction.pk,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
@@ -167,7 +164,7 @@ export class PaymentService {
       }
 
       // Si paiement synchrone immédiatement confirmé
-      if (mesombResult.success) {
+      if (payunitResult.success) {
         await this.activateCandidate(candidate.id, userId);
         return {
           success: true,
@@ -190,7 +187,7 @@ export class PaymentService {
         instructions: `Vous allez recevoir une notification USSD sur le ${phone}. Confirmez le paiement de ${registrationFee} FCFA pour activer votre compte candidat.`,
       };
     } catch (error) {
-      // En cas d'échec MeSomb, remettre le paiement en PENDING (pas supprimer le candidat)
+      // En cas d'échec PayUnit, remettre le paiement en PENDING (pas supprimer le candidat)
       await this.prisma.transaction.update({
         where: { id: transaction.id },
         data: { status: PaymentStatus.FAILED },
@@ -353,7 +350,7 @@ export class PaymentService {
     if (!dto.phone) {
       throw new BadRequestException('Numéro de téléphone requis pour ce paiement.');
     }
-    const phone = this.mesomb.normalizePhoneNumber(dto.phone);
+    const phone = this.payunit.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;
 
     const transaction = await this.prisma.transaction.create({
@@ -389,28 +386,25 @@ export class PaymentService {
     );
 
     try {
-      const mesombResult = await this.mesomb.initiatePayment({
+      const payunitResult = await this.payunit.initiatePayment({
         amount: totalAmount,
-        service: dto.operator,
-        payer: phone,
-        nonce: idempotencyKey,
+        phone,
         message: `SpotLightLover - ${quantity} vote(s) pour ${candidate.stageName}`,
       });
 
-      if (mesombResult.transaction?.pk) {
+      if (payunitResult.transactionId) {
         await this.prisma.transaction.update({
           where: { id: transaction.id },
           data: {
-            providerReference: mesombResult.transaction.pk,
-            providerResponse: mesombResult.transaction as any,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
         });
       }
 
-      if (mesombResult.success) {
+      if (payunitResult.success) {
         const bonusVotes = dto.bonusVotes || 0;
         await this.confirmVotes(
           votes.map((v) => v.id),
@@ -629,12 +623,12 @@ export class PaymentService {
     }
 
     if (transaction.providerReference) {
-      const mesombStatus = await this.mesomb.checkTransactionStatus(
+      const payunitStatus = await this.payunit.checkTransactionStatus(
         transaction.providerReference,
       );
 
       if (
-        mesombStatus.status === 'SUCCESS' &&
+        payunitStatus.status === 'SUCCESS' &&
         transaction.status === 'PENDING'
       ) {
         await this.prisma.transaction.update({
@@ -668,7 +662,7 @@ export class PaymentService {
         };
       }
 
-      if (mesombStatus.status === 'FAILED') {
+      if (payunitStatus.status === 'FAILED') {
         await this.prisma.transaction.update({
           where: { id: transactionId },
           data: { status: PaymentStatus.FAILED },
