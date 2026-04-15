@@ -98,11 +98,15 @@ export class PayunitService {
       const data = response.data;
       this.logger.log(`PayUnit response: ${JSON.stringify(data)}`);
 
-      const success = data?.status === 'SUCCESS' || data?.data?.status === 'SUCCESS';
+      // ✅ CORRECTION — payment_status est le vrai indicateur du paiement
+      const paymentStatus = data?.data?.payment_status;
+      const success = paymentStatus === 'SUCCESSFUL'; // PayUnit confirme avec "SUCCESSFUL"
+
+      this.logger.log(`PayUnit payment_status: ${paymentStatus}, success: ${success}`);
 
       return {
         success,
-        transactionId,
+        transactionId: data?.data?.transaction_id || transactionId,
         status: success ? 'COMPLETED' : 'PENDING',
         message: data?.message,
       };
@@ -130,9 +134,9 @@ export class PayunitService {
       );
 
       const data = response.data;
-      const status = data?.status || data?.data?.status;
+      const status = data?.data?.payment_status || data?.status;
 
-      if (status === 'SUCCESS') return { status: 'SUCCESS' };
+      if (status === 'SUCCESSFUL') return { status: 'SUCCESS' };
       if (status === 'FAILED' || status === 'CANCELLED') return { status: 'FAILED' };
       return { status: 'PENDING' };
     } catch {
