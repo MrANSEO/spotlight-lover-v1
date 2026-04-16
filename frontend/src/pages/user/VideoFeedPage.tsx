@@ -278,95 +278,14 @@ export default function VideoFeedPage() {
     // ✅ Scroll snap natif — remplace les boutons haut/bas
     <div className="w-full h-screen overflow-y-scroll snap-y snap-mandatory bg-black scroll-smooth">
       {candidates.map((candidate) => (
-        <div
+        <VideoSlide
           key={candidate.id}
-          className="relative w-full h-screen snap-start overflow-hidden flex-shrink-0"
-        >
-          {/* Vidéo */}
-          {candidate.videoUrl ? (
-            <video
-              src={candidate.videoUrl}
-              className="w-full h-full object-cover"
-              autoPlay
-              loop
-              playsInline
-              muted={false}
-              controls={false}
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gray-900">
-              <div className="text-center text-white">
-                <div className="text-6xl mb-4">🎥</div>
-                <p className="text-xl">Vidéo en cours d'upload...</p>
-              </div>
-            </div>
-          )}
-
-          {/* Overlay gradient */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
-
-          {/* Banner concours */}
-          {contest && contest.status === 'OPEN' && (
-            <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                <span className="text-sm font-bold">{contest.title}</span>
-              </div>
-              {contest.prizeAmount && (
-                <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
-              )}
-            </div>
-          )}
-
-          {/* Compte à rebours */}
-          {isLastDay && contest?.endDate && (
-            <CountdownBanner endDate={new Date(contest.endDate)} />
-          )}
-
-          {/* Infos candidat */}
-          <div className="absolute bottom-0 left-0 right-16 p-6 pb-10">
-            {candidate.leaderboardEntry?.rank && (
-              <div className="flex items-center gap-1 mb-2">
-                <Trophy size={14} className="text-yellow-400" />
-                <span className="text-yellow-400 text-sm font-bold">
-                  #{candidate.leaderboardEntry.rank}
-                </span>
-              </div>
-            )}
-            <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
-              {candidate.stageName}
-            </h2>
-            {candidate.bio && (
-              <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
-                {candidate.bio}
-              </p>
-            )}
-            <div className="flex items-center gap-2 mt-3">
-              <Heart size={16} className="text-red-400 fill-red-400" />
-              <span className="text-white text-sm font-semibold">
-                {(voteCounts[candidate.id] || 0).toLocaleString('fr-FR')} votes
-              </span>
-            </div>
-          </div>
-
-          {/* Bouton voter */}
-          <div className="absolute right-4 bottom-10 flex flex-col items-center gap-4">
-            <button
-              onClick={() => openVoteModal(candidate)}
-              className="flex flex-col items-center gap-1 group"
-            >
-              <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                <Heart size={22} className="text-white fill-white" />
-              </div>
-              <span className="text-white text-xs font-semibold drop-shadow">Voter</span>
-              {isLastDay ? (
-                <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">2 votes !</span>
-              ) : (
-                <span className="text-white text-xs drop-shadow">100 FCFA</span>
-              )}
-            </button>
-          </div>
-        </div>
+          candidate={candidate}
+          voteCounts={voteCounts}
+          contest={contest}
+          isLastDay={isLastDay}
+          onVote={openVoteModal}
+        />
       ))}
 
       {/* Modal de vote — reste identique */}
@@ -615,6 +534,182 @@ export default function VideoFeedPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Composant vidéo individuel avec auto-play/pause ─────────────────────────
+
+function VideoSlide({
+  candidate,
+  voteCounts,
+  contest,
+  isLastDay,
+  onVote,
+}: {
+  candidate: Candidate;
+  voteCounts: Record<string, number>;
+  contest: any;
+  isLastDay: boolean;
+  onVote: (candidate: Candidate) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const video = videoRef.current;
+    if (!container || !video) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.8) {
+            video.play().then(() => setIsPlaying(true)).catch(() => {});
+          } else {
+            video.pause();
+            video.currentTime = 0;
+            setIsPlaying(false);
+          }
+        });
+      },
+      { threshold: 0.8 },
+    );
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setIsMuted(video.muted);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full h-screen snap-start overflow-hidden flex-shrink-0"
+    >
+      {/* Vidéo */}
+      {candidate.videoUrl ? (
+        <>
+          <video
+            ref={videoRef}
+            src={candidate.videoUrl}
+            className="w-full h-full object-cover"
+            loop
+            playsInline
+            muted={isMuted}
+            onClick={togglePlay}
+          />
+          {!isPlaying && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center">
+                <div
+                  className="w-0 h-0 border-t-8 border-t-transparent border-b-8 border-b-transparent border-l-16 border-l-white ml-1"
+                  style={{ borderLeft: '20px solid white' }}
+                />
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-gray-900">
+          <div className="text-center text-white">
+            <div className="text-6xl mb-4">🎥</div>
+            <p className="text-xl">Vidéo en cours d'upload...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Overlay gradient */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
+
+      {/* Banner concours */}
+      {contest && contest.status === 'OPEN' && (
+        <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+            <span className="text-sm font-bold">{contest.title}</span>
+          </div>
+          {contest.prizeAmount && (
+            <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
+          )}
+        </div>
+      )}
+
+      {/* Compte à rebours */}
+      {isLastDay && contest?.endDate && (
+        <CountdownBanner endDate={new Date(contest.endDate)} />
+      )}
+
+      {/* Infos candidat */}
+      <div className="absolute bottom-0 left-0 right-16 p-6 pb-10">
+        {candidate.leaderboardEntry?.rank && (
+          <div className="flex items-center gap-1 mb-2">
+            <Trophy size={14} className="text-yellow-400" />
+            <span className="text-yellow-400 text-sm font-bold">
+              #{candidate.leaderboardEntry.rank}
+            </span>
+          </div>
+        )}
+        <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
+          {candidate.stageName}
+        </h2>
+        {candidate.bio && (
+          <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
+            {candidate.bio}
+          </p>
+        )}
+        <div className="flex items-center gap-2 mt-3">
+          <Heart size={16} className="text-red-400 fill-red-400" />
+          <span className="text-white text-sm font-semibold">
+            {(voteCounts[candidate.id] || 0).toLocaleString('fr-FR')} votes
+          </span>
+        </div>
+      </div>
+
+      {/* Actions droite */}
+      <div className="absolute right-4 bottom-10 flex flex-col items-center gap-5">
+        <button
+          onClick={() => onVote(candidate)}
+          className="flex flex-col items-center gap-1 group"
+        >
+          <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+            <Heart size={22} className="text-white fill-white" />
+          </div>
+          <span className="text-white text-xs font-semibold drop-shadow">Voter</span>
+          {isLastDay ? (
+            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
+              2 votes !
+            </span>
+          ) : (
+            <span className="text-white text-xs drop-shadow">100 FCFA</span>
+          )}
+        </button>
+
+        <button
+          onClick={toggleMute}
+          className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white hover:bg-black/60 transition"
+        >
+          {isMuted ? <EyeOff size={18} /> : <Eye size={18} />}
+        </button>
+      </div>
     </div>
   );
 }
