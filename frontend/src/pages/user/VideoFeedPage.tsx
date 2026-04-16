@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Trophy, ChevronUp, ChevronDown, X, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { Heart, Trophy, X, Phone, AlertCircle, CheckCircle, Loader, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 
@@ -37,13 +37,13 @@ interface VoteState {
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function VideoFeedPage() {
+  // ─── État global ──────────────────────────────────────────────────────────
+
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [voteState, setVoteState] = useState<VoteState | null>(null);
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [contest, setContest] = useState<any>(null);
   const [isLastDay, setIsLastDay] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
@@ -88,30 +88,14 @@ export default function VideoFeedPage() {
   }).catch(() => {});
 }, []);
 
-  // ─── Navigation entre vidéos ──────────────────────────────────────────────
+  // ─── Navigation supprimée — utilise scroll snap natif ─────────────────────
 
-  const goNext = useCallback(() => {
-    if (currentIndex < candidates.length - 1) {
-      setCurrentIndex((i) => i + 1);
-    }
-  }, [currentIndex, candidates.length]);
+  // Les boutons haut/bas ne sont plus nécessaires avec le scroll snap natif.
+  // Le scroll se fait automatiquement au doigt sur mobile et à la molette sur desktop.
 
-  const goPrev = useCallback(() => {
-    if (currentIndex > 0) {
-      setCurrentIndex((i) => i - 1);
-    }
-  }, [currentIndex]);
 
   // Navigation clavier
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (voteState) return; // Ne pas naviguer si la modal est ouverte
-      if (e.key === 'ArrowDown') goNext();
-      if (e.key === 'ArrowUp') goPrev();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [goNext, goPrev, voteState]);
+  // Les touches clavier ne sont plus nécessaires avec le scroll natif
 
   // ─── Ouverture modal de vote ──────────────────────────────────────────────
 
@@ -290,153 +274,102 @@ export default function VideoFeedPage() {
     );
   }
 
-  const current = candidates[currentIndex];
-
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden select-none">
-    
-    {/* Banner concours */}
-{contest && contest.status === 'OPEN' && (
-  <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
-    <div className="flex items-center gap-2">
-      <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-      <span className="text-sm font-bold">{contest.title}</span>
-    </div>
-    {contest.prizeAmount && (
-      <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
-    )}
-  </div>
-)}
-{contest && contest.status === 'CLOSED' && (
-  <div className="absolute top-0 left-0 right-0 z-10 bg-red-500/80 backdrop-blur-sm text-white px-4 py-2 text-center">
-    <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
-  </div>
-)}
+    // ✅ Scroll snap natif — remplace les boutons haut/bas
+    <div className="w-full h-screen overflow-y-scroll snap-y snap-mandatory bg-black scroll-smooth">
+      {candidates.map((candidate) => (
+        <div
+          key={candidate.id}
+          className="relative w-full h-screen snap-start overflow-hidden flex-shrink-0"
+        >
+          {/* Vidéo */}
+          {candidate.videoUrl ? (
+            <video
+              src={candidate.videoUrl}
+              className="w-full h-full object-cover"
+              autoPlay
+              loop
+              playsInline
+              muted={false}
+              controls={false}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gray-900">
+              <div className="text-center text-white">
+                <div className="text-6xl mb-4">🎥</div>
+                <p className="text-xl">Vidéo en cours d'upload...</p>
+              </div>
+            </div>
+          )}
 
-{/* Compte à rebours — visible uniquement dans les 24h */}
-{isLastDay && contest?.endDate && (
-  <CountdownBanner endDate={new Date(contest.endDate)} />
-)}
-    
-      {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
-      <div className="absolute inset-0">
-        {current.videoUrl ? (
-          <video
-            ref={(el) => { videoRefs.current[current.id] = el; }}
-            key={current.id}
-            src={current.videoUrl}
-            className="w-full h-full object-cover"
-            autoPlay
-            loop
-            playsInline
-            muted={false}
-            controls={false}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gray-900">
-            <div className="text-center text-white">
-              <div className="text-6xl mb-4">🎥</div>
-              <p className="text-xl">Vidéo en cours d'upload...</p>
+          {/* Overlay gradient */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
+
+          {/* Banner concours */}
+          {contest && contest.status === 'OPEN' && (
+            <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                <span className="text-sm font-bold">{contest.title}</span>
+              </div>
+              {contest.prizeAmount && (
+                <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
+              )}
+            </div>
+          )}
+
+          {/* Compte à rebours */}
+          {isLastDay && contest?.endDate && (
+            <CountdownBanner endDate={new Date(contest.endDate)} />
+          )}
+
+          {/* Infos candidat */}
+          <div className="absolute bottom-0 left-0 right-16 p-6 pb-10">
+            {candidate.leaderboardEntry?.rank && (
+              <div className="flex items-center gap-1 mb-2">
+                <Trophy size={14} className="text-yellow-400" />
+                <span className="text-yellow-400 text-sm font-bold">
+                  #{candidate.leaderboardEntry.rank}
+                </span>
+              </div>
+            )}
+            <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
+              {candidate.stageName}
+            </h2>
+            {candidate.bio && (
+              <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
+                {candidate.bio}
+              </p>
+            )}
+            <div className="flex items-center gap-2 mt-3">
+              <Heart size={16} className="text-red-400 fill-red-400" />
+              <span className="text-white text-sm font-semibold">
+                {(voteCounts[candidate.id] || 0).toLocaleString('fr-FR')} votes
+              </span>
             </div>
           </div>
-        )}
 
-        {/* Overlay gradient bas */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
-      </div>
-
-      {/* ─── Infos candidat ────────────────────────────────────────────────── */}
-      <div className="absolute bottom-0 left-0 right-16 p-6 pb-8">
-        {/* Rang */}
-        {current.leaderboardEntry?.rank && (
-          <div className="flex items-center gap-1 mb-2">
-            <Trophy size={14} className="text-yellow-400" />
-            <span className="text-yellow-400 text-sm font-bold">
-              #{current.leaderboardEntry.rank}
-            </span>
+          {/* Bouton voter */}
+          <div className="absolute right-4 bottom-10 flex flex-col items-center gap-4">
+            <button
+              onClick={() => openVoteModal(candidate)}
+              className="flex flex-col items-center gap-1 group"
+            >
+              <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                <Heart size={22} className="text-white fill-white" />
+              </div>
+              <span className="text-white text-xs font-semibold drop-shadow">Voter</span>
+              {isLastDay ? (
+                <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">2 votes !</span>
+              ) : (
+                <span className="text-white text-xs drop-shadow">100 FCFA</span>
+              )}
+            </button>
           </div>
-        )}
-
-        {/* Nom de scène */}
-        <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
-          {current.stageName}
-        </h2>
-
-        {/* Bio */}
-        {current.bio && (
-          <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
-            {current.bio}
-          </p>
-        )}
-
-        {/* Compteur de votes */}
-        <div className="flex items-center gap-2 mt-3">
-          <Heart size={16} className="text-red-400 fill-red-400" />
-          <span className="text-white text-sm font-semibold">
-            {(voteCounts[current.id] || 0).toLocaleString('fr-FR')} votes
-          </span>
         </div>
-      </div>
+      ))}
 
-      {/* ─── Actions droite ────────────────────────────────────────────────── */}
-      <div className="absolute right-4 bottom-0 flex flex-col items-center gap-6 pb-10">
-        {/* Bouton voter */}
-        <button
-          onClick={() => openVoteModal(current)}
-          className="flex flex-col items-center gap-1 group"
-        >
-          <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-            <Heart size={22} className="text-white fill-white" />
-          </div>
-          <span className="text-white text-xs font-semibold drop-shadow">
-            Voter
-          </span>
-          {isLastDay ? (
-            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
-              2 votes !
-            </span>
-          ) : (
-            <span className="text-white text-xs drop-shadow">
-              100 FCFA
-            </span>
-          )}
-        </button>
-
-        {/* Navigation haut/bas */}
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={goPrev}
-            disabled={currentIndex === 0}
-            className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white disabled:opacity-30 hover:bg-black/60 transition"
-          >
-            <ChevronUp size={20} />
-          </button>
-          <button
-            onClick={goNext}
-            disabled={currentIndex === candidates.length - 1}
-            className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white disabled:opacity-30 hover:bg-black/60 transition"
-          >
-            <ChevronDown size={20} />
-          </button>
-        </div>
-      </div>
-
-      {/* ─── Indicateur de position ────────────────────────────────────────── */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex gap-1">
-        {candidates.slice(Math.max(0, currentIndex - 2), currentIndex + 3).map((_, i) => {
-          const idx = Math.max(0, currentIndex - 2) + i;
-          return (
-            <div
-              key={idx}
-              className={`h-1 rounded-full transition-all ${
-                idx === currentIndex ? 'w-6 bg-white' : 'w-1.5 bg-white/40'
-              }`}
-            />
-          );
-        })}
-      </div>
-
-      {/* ─── Modal de vote ─────────────────────────────────────────────────── */}
+      {/* Modal de vote — reste identique */}
       {voteState && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
           <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl max-h-[90vh] overflow-y-auto">
