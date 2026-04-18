@@ -1668,10 +1668,33 @@ async register(registerDto: RegisterDto) {
       where: { email: loginDto.email },
     });
 
+    // ✅ Vérifier si le compte est verrouillé
+    if (user && user.lockedUntil && user.lockedUntil > new Date()) {
+      const minutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      throw new UnauthorizedException(`Compte verrouillé. Réessayez dans ${minutes} minute(s).`);
+    }
+
     const isPasswordValid =
       user && user.password && (await bcrypt.compare(loginDto.password, user.password));
 
     if (!user || !isPasswordValid) {
+      // ✅ Incrémenter les tentatives échouées
+      if (user) {
+        const newAttempts = (user.loginAttempts || 0) + 1;
+        const shouldLock = newAttempts >= 5; // Verrouiller après 5 tentatives
+        
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            loginAttempts: newAttempts,
+            lockedUntil: shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null, // 15 min
+          },
+        });
+
+        if (shouldLock) {
+          throw new UnauthorizedException(`Trop de tentatives échouées. Compte verrouillé pour 15 minutes.`);
+        }
+      }
       throw new UnauthorizedException('Email ou mot de passe incorrect.');
     }
 
@@ -1687,9 +1710,14 @@ async register(registerDto: RegisterDto) {
       if (!isValid) throw new UnauthorizedException('Code 2FA invalide.');
     }
 
+    // ✅ Login réussi — réinitialiser les tentatives et verrouillage
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { lastLogin: new Date() },
+      data: {
+        loginAttempts: 0,
+        lockedUntil: null,
+        lastLogin: new Date(),
+      },
     });
 
     const tokens = await this.generateTokens(user.id, user.email, user.role);
@@ -2301,7 +2329,7 @@ export class CandidatesService {
         take: limit,
         include: {
           user: { select: { email: true } },
-          leaderboardEntry: { select: { totalVotes: true, rank: true } },
+          leaderboardEntry: { select: { totalVotes: true, rank: true, totalAmount: true } },
           _count: { select: { votesReceived: { where: { status: 'COMPLETED' } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -2312,7 +2340,7 @@ export class CandidatesService {
     return {
       data: candidates.map((c) => ({
         ...c,
-        totalVoteAmount: (c._count.votesReceived || 0) * 100,
+        totalVoteAmount: c.leaderboardEntry?.totalAmount || 0,
       })),
       pagination: {
         page,
@@ -2341,8 +2369,8 @@ export class CandidatesService {
 
     return {
       ...candidate,
-      totalVotes: candidate._count.votesReceived,
-      totalAmount: candidate._count.votesReceived * 100,
+      totalVotes: candidate.leaderboardEntry?.totalVotes || candidate._count.votesReceived,
+      totalAmount: candidate.leaderboardEntry?.totalAmount || 0,
     };
   }
 
@@ -3746,12 +3774,16 @@ export class ContestService {
 
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Health check endpoint' })
@@ -3771,7 +3803,7 @@ export class HealthController {
         status: 'error',
         timestamp: new Date().toISOString(),
         database: 'disconnected',
-        error: error.message,
+        error: this.configService.get('NODE_ENV') === 'production' ? 'Database error' : (error as any).message,
       };
     }
   }
@@ -3822,11 +3854,13 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LeaderboardService } from './leaderboard.service';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173'],
+    credentials: true,
   },
   namespace: '/leaderboard',
 })
@@ -3836,7 +3870,10 @@ export class LeaderboardGateway implements OnGatewayConnection, OnGatewayDisconn
 
   private readonly logger = new Logger(LeaderboardGateway.name);
 
-  constructor(private leaderboardService: LeaderboardService) {}
+  constructor(
+    private leaderboardService: LeaderboardService,
+    private configService: ConfigService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -4371,11 +4408,11 @@ export class InitiateCandidatePaymentDto {
   candidateId: string;
 
   @ApiProperty({
-    description: 'Numéro Mobile Money (format: 237XXXXXXXXX ou 6XXXXXXXX)',
+    description: 'Numéro Mobile Money (format: 237XXXXXXXXX ou 6XXXXXXXXX)',
     example: '237690000001',
   })
   @IsString()
-  @Matches(/^(237)?[0-9]{9}$/, {
+  @Matches(/^(237)?6[0-9]{8}$/, {
     message: 'Numéro invalide. Format: 237690000001 ou 690000001',
   })
   phone: string;
@@ -4393,14 +4430,14 @@ export class InitiateVotePaymentDto {
   candidateId: string;
 
   @ApiProperty({
-    description: 'Numéro Mobile Money du votant',
+    required: false,
+    description: 'Numéro Mobile Money du votant (optionnel si portefeuille suffisant)',
     example: '237690000001',
   })
+  @IsOptional()
   @IsString()
-  @Matches(/^(237)?[0-9]{9}$/, {
-    message: 'Numéro invalide. Format: 237690000001 ou 690000001',
-  })
-  phone: string;
+  // ✅ Pas de @Matches ici — la validation se fera côté service via normalizePhoneNumber
+  phone?: string;
 
   @ApiProperty({ enum: MobileOperator })
   @IsEnum(MobileOperator)
@@ -4418,10 +4455,12 @@ export class InitiateVotePaymentDto {
     required: false,
     description: 'Votes bonus offerts',
     minimum: 0,
+    maximum: 100,
   })
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(100)
   bonusVotes?: number;
 
   @IsOptional()
@@ -4685,6 +4724,154 @@ export class MeSombService {
 
 
 import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
+
+export interface PayunitPaymentResponse {
+  success: boolean;
+  transactionId: string;
+  status: 'COMPLETED' | 'PENDING' | 'FAILED';
+  message?: string;
+}
+
+@Injectable()
+export class PayunitService {
+  private readonly logger = new Logger(PayunitService.name);
+  private readonly baseUrl = 'https://gateway.payunit.net';
+
+  constructor(private config: ConfigService) {}
+
+  private getAuthHeader(): string {
+    const username = this.config.get('PAYUNIT_USERNAME');
+    const password = this.config.get('PAYUNIT_PASSWORD');
+    return Buffer.from(`${username}:${password}`).toString('base64');
+  }
+
+  private getHeaders() {
+    return {
+      'x-api-key': this.config.get('PAYUNIT_API_KEY'),
+      'mode': this.config.get('PAYUNIT_MODE', 'live'),
+      'Content-Type': 'application/json',
+      'Authorization': `Basic ${this.getAuthHeader()}`,
+    };
+  }
+
+  normalizePhoneNumber(phone: string): string {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('237') && digits.length === 12) return digits;
+    if (digits.length === 9) return `237${digits}`;
+    if (digits.startsWith('00237') && digits.length === 14)
+      return digits.substring(2);
+    throw new BadRequestException(
+      `Numéro invalide: ${phone}. Format: 237XXXXXXXXX ou 6XXXXXXXX`,
+    );
+  }
+
+  detectGateway(phone: string): 'CM_MTNMOMO' | 'CM_ORANGE' {
+    const normalized = this.normalizePhoneNumber(phone);
+    const prefix = normalized.substring(3, 5);
+    return prefix === '69' ? 'CM_ORANGE' : 'CM_MTNMOMO';
+  }
+
+  async initiatePayment(params: {
+    amount: number;
+    phone: string;
+    message?: string;
+  }): Promise<PayunitPaymentResponse> {
+    const phone = this.normalizePhoneNumber(params.phone);
+    const gateway = this.detectGateway(phone);
+    const transactionId = `SLL_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const headers = this.getHeaders();
+
+    this.logger.log(
+      `PayUnit payment: ${params.amount} XAF → ${phone} via ${gateway}`,
+    );
+
+    try {
+      // Étape 1 — Initialize
+      await axios.post(
+        `${this.baseUrl}/api/gateway/initialize`,
+        {
+          transaction_id: transactionId,
+          total_amount: params.amount,
+          currency: 'XAF',
+        },
+        { headers },
+      );
+
+      // Étape 2 — Make payment
+      const response = await axios.post(
+        `${this.baseUrl}/api/gateway/makepayment`,
+        {
+          gateway,
+          amount: params.amount,
+          transaction_id: transactionId,
+          phone_number: phone,
+          currency: 'XAF',
+          paymentType: 'button',
+          notify_url: this.config.get('PAYUNIT_NOTIFY_URL'),
+          return_url: this.config.get('PAYUNIT_RETURN_URL'),
+        },
+        { headers },
+      );
+
+      const data = response.data;
+      this.logger.log(`PayUnit response: ${JSON.stringify(data)}`);
+
+      // ✅ CORRECTION — payment_status est le vrai indicateur du paiement
+      const paymentStatus = data?.data?.payment_status;
+      const success = paymentStatus === 'SUCCESSFUL'; // PayUnit confirme avec "SUCCESSFUL"
+
+      this.logger.log(`PayUnit payment_status: ${paymentStatus}, success: ${success}`);
+
+      return {
+        success,
+        transactionId: data?.data?.transaction_id || transactionId,
+        status: success ? 'COMPLETED' : 'PENDING',
+        message: data?.message,
+      };
+    } catch (error: any) {
+      const msg = error.response?.data?.message || error.message;
+      this.logger.error(`PayUnit erreur: ${msg}`);
+
+      if (msg?.includes('insufficient')) {
+        throw new BadRequestException('Solde insuffisant sur votre Mobile Money.');
+      }
+
+      throw new InternalServerErrorException(
+        'Erreur de communication avec PayUnit. Réessayez.',
+      );
+    }
+  }
+
+  async checkTransactionStatus(transactionId: string): Promise<{
+    status: 'SUCCESS' | 'FAILED' | 'PENDING';
+  }> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/api/gateway/transaction/${transactionId}`,
+        { headers: this.getHeaders() },
+      );
+
+      const data = response.data;
+      const status = data?.data?.payment_status || data?.status;
+
+      if (status === 'SUCCESSFUL') return { status: 'SUCCESS' };
+      if (status === 'FAILED' || status === 'CANCELLED') return { status: 'FAILED' };
+      return { status: 'PENDING' };
+    } catch {
+      return { status: 'PENDING' };
+    }
+  }
+}
+
+
+import {
   Controller,
   Get,
   Post,
@@ -4848,15 +5035,15 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
-import { MeSombService } from './mesomb/mesomb.service';
+import { PayunitService } from './payunit/payunit.service';
 import { PrismaService } from '../prisma.service';
 import { ReferralModule } from '../referral/referral.module';
 
 @Module({
   imports: [ConfigModule, ReferralModule],
   controllers: [PaymentController],
-  providers: [PaymentService, MeSombService, PrismaService],
-  exports: [PaymentService, MeSombService],
+  providers: [PaymentService, PayunitService, PrismaService],
+  exports: [PaymentService, PayunitService],
 })
 export class PaymentModule {}
 
@@ -4869,7 +5056,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { MeSombService } from './mesomb/mesomb.service';
+import { PayunitService } from './payunit/payunit.service';
 import { ConfigService } from '@nestjs/config';
 import { ReferralService } from '../referral/referral.service';
 import {
@@ -4885,7 +5072,7 @@ export class PaymentService {
 
   constructor(
     private prisma: PrismaService,
-    private mesomb: MeSombService,
+    private payunit: PayunitService,
     private config: ConfigService,
     private referralService: ReferralService,
   ) {}
@@ -4948,7 +5135,7 @@ export class PaymentService {
     );
 
     // Normaliser le numéro de téléphone
-    const phone = this.mesomb.normalizePhoneNumber(dto.phone);
+    const phone = this.payunit.normalizePhoneNumber(dto.phone);
 
     // Générer une clé d'idempotence unique
     const idempotencyKey = `reg_${userId}_${Date.now()}`;
@@ -4994,24 +5181,21 @@ export class PaymentService {
       },
     });
 
-    // Appeler MeSomb pour déclencher le paiement
+    // Appeler PayUnit pour déclencher le paiement
     try {
-      const mesombResult = await this.mesomb.initiatePayment({
+      const payunitResult = await this.payunit.initiatePayment({
         amount: registrationFee,
-        service: dto.operator,
-        payer: phone,
-        nonce: idempotencyKey,
+        phone,
         message: `SpotLightLover - Inscription candidat: ${candidate.stageName}`,
       });
 
-      // Mettre à jour avec la référence MeSomb
-      if (mesombResult.transaction?.pk) {
+      // Mettre à jour avec la référence PayUnit
+      if (payunitResult.transactionId) {
         await this.prisma.transaction.update({
           where: { id: transaction.id },
           data: {
-            providerReference: mesombResult.transaction.pk,
-            providerResponse: mesombResult.transaction as any,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
@@ -5021,8 +5205,8 @@ export class PaymentService {
           where: { id: paymentRecord.id },
           data: {
             transactionId: transaction.id,
-            providerReference: mesombResult.transaction.pk,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
@@ -5030,7 +5214,7 @@ export class PaymentService {
       }
 
       // Si paiement synchrone immédiatement confirmé
-      if (mesombResult.success) {
+      if (payunitResult.success) {
         await this.activateCandidate(candidate.id, userId);
         return {
           success: true,
@@ -5053,7 +5237,7 @@ export class PaymentService {
         instructions: `Vous allez recevoir une notification USSD sur le ${phone}. Confirmez le paiement de ${registrationFee} FCFA pour activer votre compte candidat.`,
       };
     } catch (error) {
-      // En cas d'échec MeSomb, remettre le paiement en PENDING (pas supprimer le candidat)
+      // En cas d'échec PayUnit, remettre le paiement en PENDING (pas supprimer le candidat)
       await this.prisma.transaction.update({
         where: { id: transaction.id },
         data: { status: PaymentStatus.FAILED },
@@ -5195,11 +5379,12 @@ export class PaymentService {
           ),
         );
 
-        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', 0);
+        const bonusVotes = dto.bonusVotes || 0;
+        await this.confirmVotes(votes.map(v => v.id), 'wallet_payment', bonusVotes);
 
         return {
           success: true,
-          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits !`,
+          message: `✅ ${quantity} vote(s) payé(s) avec vos crédits${bonusVotes > 0 ? ` + ${bonusVotes} GRATUIT(S)` : ''} !`,
           voteIds: votes.map(v => v.id),
           transactionId: 'wallet_payment',
           status: 'COMPLETED',
@@ -5211,7 +5396,11 @@ export class PaymentService {
     }
 
     // ✅ Seulement ici on normalise le téléphone — après la vérification wallet
-    const phone = this.mesomb.normalizePhoneNumber(dto.phone);
+    // ✅ ET seulement s'il est fourni (optionnel si wallet couvre)
+    if (!dto.phone) {
+      throw new BadRequestException('Numéro de téléphone requis pour ce paiement.');
+    }
+    const phone = this.payunit.normalizePhoneNumber(dto.phone);
     const idempotencyKey = `vote_${voterId}_${dto.candidateId}_${Date.now()}`;
 
     const transaction = await this.prisma.transaction.create({
@@ -5247,28 +5436,25 @@ export class PaymentService {
     );
 
     try {
-      const mesombResult = await this.mesomb.initiatePayment({
+      const payunitResult = await this.payunit.initiatePayment({
         amount: totalAmount,
-        service: dto.operator,
-        payer: phone,
-        nonce: idempotencyKey,
+        phone,
         message: `SpotLightLover - ${quantity} vote(s) pour ${candidate.stageName}`,
       });
 
-      if (mesombResult.transaction?.pk) {
+      if (payunitResult.transactionId) {
         await this.prisma.transaction.update({
           where: { id: transaction.id },
           data: {
-            providerReference: mesombResult.transaction.pk,
-            providerResponse: mesombResult.transaction as any,
-            status: mesombResult.success
+            providerReference: payunitResult.transactionId,
+            status: payunitResult.success
               ? PaymentStatus.COMPLETED
               : PaymentStatus.PROCESSING,
           },
         });
       }
 
-      if (mesombResult.success) {
+      if (payunitResult.success) {
         const bonusVotes = dto.bonusVotes || 0;
         await this.confirmVotes(
           votes.map((v) => v.id),
@@ -5487,12 +5673,12 @@ export class PaymentService {
     }
 
     if (transaction.providerReference) {
-      const mesombStatus = await this.mesomb.checkTransactionStatus(
+      const payunitStatus = await this.payunit.checkTransactionStatus(
         transaction.providerReference,
       );
 
       if (
-        mesombStatus.status === 'SUCCESS' &&
+        payunitStatus.status === 'SUCCESS' &&
         transaction.status === 'PENDING'
       ) {
         await this.prisma.transaction.update({
@@ -5526,7 +5712,7 @@ export class PaymentService {
         };
       }
 
-      if (mesombStatus.status === 'FAILED') {
+      if (payunitStatus.status === 'FAILED') {
         await this.prisma.transaction.update({
           where: { id: transactionId },
           data: { status: PaymentStatus.FAILED },
@@ -5684,6 +5870,212 @@ export class PaymentService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return today;
+  }
+}
+
+
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../common/guards/auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ReferralService } from './referral.service';
+
+@ApiTags('Referral')
+@Controller('referral')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
+export class ReferralController {
+  constructor(private referralService: ReferralService) {}
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Mes stats de parrainage + solde wallet' })
+  async getStats(@CurrentUser() user: any) {
+    return this.referralService.getReferralStats(user.id);
+  }
+
+  @Get('wallet')
+  @ApiOperation({ summary: 'Historique de mon wallet' })
+  async getWallet(@CurrentUser() user: any) {
+    return this.referralService.getWalletHistory(user.id);
+  }
+}
+
+
+import { Module } from '@nestjs/common';
+import { ReferralService } from './referral.service';
+import { ReferralController } from './referral.controller';
+import { PrismaService } from '../prisma.service';
+
+@Module({
+  controllers: [ReferralController],
+  providers: [ReferralService, PrismaService],
+  exports: [ReferralService],
+})
+export class ReferralModule {}
+
+
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
+import { v4 as uuidv4 } from 'uuid';
+
+@Injectable()
+export class ReferralService {
+  private readonly logger = new Logger(ReferralService.name);
+
+  constructor(private prisma: PrismaService) {}
+
+  // Génère ou récupère le code de parrainage d'un user
+  async getOrCreateReferralCode(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('User not found');
+
+    if (user.referralCode) return user.referralCode;
+
+    const code = uuidv4().split('-')[0].toUpperCase(); // Ex: A3F9B2C1
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { referralCode: code },
+    });
+    return code;
+  }
+
+  // Appelé lors de l'inscription avec un code parrain
+  async processReferral(newUserId: string, referralCode: string): Promise<void> {
+    try {
+      const referrer = await this.prisma.user.findUnique({
+        where: { referralCode },
+      });
+
+      if (!referrer || referrer.id === newUserId) return;
+
+      // Vérifier que ce user n'a pas déjà un parrain
+      const existing = await this.prisma.referral.findUnique({
+        where: { referredId: newUserId },
+      });
+      if (existing) return;
+
+      // Créer le parrainage
+      const referral = await this.prisma.referral.create({
+        data: {
+          referrerId: referrer.id,
+          referredId: newUserId,
+          bonusAmount: 50,
+          bonusPaid: false,
+        },
+      });
+
+      // Créditer le wallet du parrain
+      await this.creditWallet(referrer.id, 50, 'REFERRAL_BONUS', referral.id);
+
+      this.logger.log(`Referral processed: ${referrer.email} → +50 FCFA`);
+    } catch (e) {
+      this.logger.error('processReferral error:', e);
+    }
+  }
+
+  // Crédite le wallet d'un user
+  async creditWallet(
+    userId: string,
+    amount: number,
+    type: string,
+    referenceId?: string,
+  ): Promise<void> {
+    // Crée le wallet si inexistant
+    let wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      wallet = await this.prisma.wallet.create({
+        data: { userId, balance: 0 },
+      });
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.wallet.update({
+        where: { userId },
+        data: { balance: { increment: amount } },
+      }),
+      this.prisma.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          type,
+          amount,
+          description: type === 'REFERRAL_BONUS'
+            ? `+${amount} FCFA — Bonus parrainage`
+            : `${amount} FCFA — Vote`,
+          referenceId,
+        },
+      }),
+    ]);
+  }
+
+  // Débite le wallet (pour voter avec les crédits)
+  async debitWallet(userId: string, amount: number, referenceId?: string): Promise<boolean> {
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet || wallet.balance < amount) return false;
+
+    await this.prisma.$transaction([
+      this.prisma.wallet.update({
+        where: { userId },
+        data: { balance: { decrement: amount } },
+      }),
+      this.prisma.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          type: 'VOTE_DEBIT',
+          amount: -amount,
+          description: `-${amount} FCFA — Vote payé avec crédits`,
+          referenceId,
+        },
+      }),
+    ]);
+    return true;
+  }
+
+  // Stats de parrainage pour un user
+  async getReferralStats(userId: string) {
+    const code = await this.getOrCreateReferralCode(userId);
+    const frontendUrl = process.env.FRONTEND_URL || 'https://spotlight-lover-v1.vercel.app';
+
+    const [referrals, wallet] = await Promise.all([
+      this.prisma.referral.findMany({
+        where: { referrerId: userId },
+        include: {
+          referred: { select: { firstName: true, lastName: true, createdAt: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.wallet.findUnique({ where: { userId } }),
+    ]);
+
+    return {
+      referralCode: code,
+      referralLink: `${frontendUrl}/register?ref=${code}`,
+      totalReferrals: referrals.length,
+      totalEarned: referrals.length * 50,
+      walletBalance: wallet?.balance || 0,
+      referrals: referrals.map(r => ({
+        name: `${r.referred.firstName || ''} ${r.referred.lastName || ''}`.trim() || 'Anonyme',
+        date: r.createdAt,
+        bonus: r.bonusAmount,
+      })),
+    };
+  }
+
+  // Historique wallet
+  async getWalletHistory(userId: string) {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+      include: {
+        transactions: {
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        },
+      },
+    });
+
+    return {
+      balance: wallet?.balance || 0,
+      transactions: wallet?.transactions || [],
+    };
   }
 }
 
@@ -7003,6 +7395,14 @@ export class WebhooksController {
     );
   }
 
+  @Post('payunit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Webhook PayUnit — callback de paiement (public)' })
+  payunitWebhook(@Body() payload: any) {
+    this.logger.log(`PayUnit webhook received: ${JSON.stringify(payload)}`);
+    return this.webhooksService.processPayunitWebhook(payload);
+  }
+
   // ─── Logs webhooks (Admin) ────────────────────────────────────────────────
 
   @Get('logs')
@@ -7054,11 +7454,12 @@ import { PrismaService } from '../prisma.service';
 import { PaymentModule } from '../payments/payment.module';
 import { ConfigModule } from '@nestjs/config';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
+import { MeSombService } from '../payments/mesomb/mesomb.service';
 
 @Module({
   imports: [ConfigModule, LeaderboardModule, PaymentModule],
   controllers: [WebhooksController],
-  providers: [WebhooksService, PrismaService],
+  providers: [WebhooksService, PrismaService, MeSombService],
   exports: [WebhooksService],
 })
 export class WebhooksModule {}
@@ -7075,6 +7476,7 @@ export class WebhooksModule {}
 // Tout le reste (getLogs, getLog, retryWebhook, traitement SUCCESS/FAILED) est IDENTIQUE.
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { PaymentService } from '../payments/payment.service';
 import { MeSombService } from '../payments/mesomb/mesomb.service';
@@ -7086,7 +7488,8 @@ export class WebhooksService {
   constructor(
     private prisma: PrismaService,
     private paymentService: PaymentService,
-    private mesomb: MeSombService,
+    private mesombService: MeSombService,
+    private configService: ConfigService,
   ) {}
 
   // ─── Traitement du webhook MeSomb — CORRIGÉ ───────────────────────────────
@@ -7104,7 +7507,7 @@ export class WebhooksService {
     if (signature && mesombDate && mesombNonce) {
       // ✅ Vraie vérification (remplace isValid: true hardcodé)
       const rawPayload = JSON.stringify(payload);
-      isValid = this.mesomb.verifyWebhookSignature(
+      isValid = this.mesombService.verifyWebhookSignature(
         rawPayload,
         signature,
         mesombDate,
@@ -7220,7 +7623,116 @@ export class WebhooksService {
       this.logger.error('Error processing MeSomb webhook:', error);
       await this.prisma.webhookLog.update({
         where: { id: webhookLog.id },
-        data: { isProcessed: false, processingError: error.message },
+        data: {
+          isProcessed: false,
+          processingError: this.configService.get('NODE_ENV') === 'production' ? 'Processing error' : error.message,
+        },
+      });
+      return { received: true, processed: false };
+    }
+  }
+
+  // ─── Traitement du webhook PayUnit ──────────────────────────────────────
+
+  async processPayunitWebhook(payload: any) {
+    this.logger.log(`Processing PayUnit webhook: ${JSON.stringify(payload)}`);
+
+    // Créer un log webhook
+    const webhookLog = await this.prisma.webhookLog.create({
+      data: {
+        provider: 'PAYUNIT',
+        event: payload.status || 'UNKNOWN',
+        payload: payload as any,
+        isProcessed: false,
+      },
+    });
+
+    try {
+      const transactionId = payload.transaction_id as string;
+      const status = payload.status as string;
+
+      if (!transactionId) {
+        this.logger.warn('PayUnit webhook missing transaction_id');
+        return { received: true, processed: false };
+      }
+
+      // Retrouver la transaction en base
+      const transaction = await this.prisma.transaction.findFirst({
+        where: { providerReference: transactionId },
+        include: { votes: { select: { id: true } } },
+      });
+
+      if (!transaction) {
+        this.logger.warn(
+          `Transaction not found for PayUnit ID: ${transactionId}`,
+        );
+        return { received: true, processed: false };
+      }
+
+      // Traiter selon le statut
+      if (status === 'SUCCESS' && transaction.status !== 'COMPLETED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'COMPLETED',
+            webhookReceived: true,
+            webhookData: payload as any,
+          },
+        });
+
+        if (transaction.type === 'VOTE' && transaction.votes.length > 0) {
+          await this.paymentService.confirmVotes(
+            transaction.votes.map((v) => v.id),
+            transaction.id,
+          );
+          this.logger.log(
+            `Votes confirmed via PayUnit webhook: ${transaction.id}`,
+          );
+        } else if (transaction.type === 'REGISTRATION') {
+          // Activer le candidat
+          const regPayment =
+            await this.prisma.candidateRegistrationPayment.findFirst({
+              where: { userId: transaction.userId },
+              include: { candidate: true },
+            });
+          if (regPayment?.candidate) {
+            await this.paymentService.activateCandidate(
+              regPayment.candidate.id,
+              transaction.userId,
+            );
+            this.logger.log(
+              `Candidate ${regPayment.candidate.id} activated via PayUnit webhook`,
+            );
+          }
+        }
+      } else if (status === 'FAILED' && transaction.status !== 'FAILED') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'FAILED',
+            webhookReceived: true,
+            webhookData: payload as any,
+          },
+        });
+      }
+
+      await this.prisma.webhookLog.update({
+        where: { id: webhookLog.id },
+        data: { isProcessed: true },
+      });
+
+      return { received: true, processed: true };
+    } catch (error: any) {
+      this.logger.error('Error processing PayUnit webhook:', error);
+      await this.prisma.webhookLog.update({
+        where: { id: webhookLog.id },
+        data: {
+          isProcessed: false,
+          processingError:
+            this.configService.get('NODE_ENV') === 'production'
+              ? 'Processing error'
+              : error.message,
+        },
       });
       return { received: true, processed: false };
     }
@@ -7398,6 +7910,31 @@ async function bootstrap() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // ✅ HSTS — Force HTTPS en production
+      hsts: {
+        maxAge: 31536000, // 1 an
+        includeSubDomains: true,
+        preload: nodeEnv === 'production',
+      },
+      // ✅ CSP — Content Security Policy
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+          connectSrc: ["'self'"],
+          mediaSrc: ["'self'", 'https:', 'blob:'],
+          frameSrc: ["'none'"],
+        },
+      },
+      // ✅ XXssProtection — Protection XSS
+      xXssProtection: true,
+      // ✅ X-Content-Type-Options — Prévient MIME sniffing
+      noSniff: true,
+      // ✅ X-Frame-Options — Prévient clickjacking
+      frameguard: { action: 'deny' },
     }),
   );
 
@@ -7657,155 +8194,13 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3001,https://3f27-165-210-39
 Admin password= Admin@SpotLight2025!
 
 
-{
-  "name": "backend",
-  "version": "0.0.1",
-  "description": "",
-  "author": "",
-  "private": true,
-  "license": "UNLICENSED",
-  "scripts": {
-    "postinstall": "prisma generate",
-    "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/src/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
-  },
-  "dependencies": {
-    "@hachther/mesomb": "^2.0.1",
-    "@nestjs/common": "^11.0.1",
-    "@nestjs/config": "^4.0.3",
-    "@nestjs/core": "^11.0.1",
-    "@nestjs/jwt": "^11.0.2",
-    "@nestjs/passport": "^11.0.5",
-    "@nestjs/platform-express": "^11.0.1",
-    "@nestjs/platform-socket.io": "^11.1.16",
-    "@nestjs/schedule": "^6.1.1",
-    "@nestjs/swagger": "^11.2.6",
-    "@nestjs/throttler": "^6.5.0",
-    "@nestjs/websockets": "^11.1.16",
-    "@prisma/adapter-pg": "^7.5.0",
-    "@prisma/client": "^7.4.2",
-    "@types/nodemailer": "^7.0.11",
-    "@types/passport-google-oauth20": "^2.0.17",
-    "axios": "^1.13.6",
-    "bcrypt": "^6.0.0",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.4",
-    "cloudinary": "^2.9.0",
-    "helmet": "^8.1.0",
-    "multer": "^2.1.1",
-    "nodemailer": "^8.0.3",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "passport-jwt": "^4.0.1",
-    "passport-local": "^1.0.0",
-    "pg": "^8.20.0",
-    "prisma": "^7.4.2",
-    "qrcode": "^1.5.4",
-    "reflect-metadata": "^0.2.2",
-    "resend": "^6.10.0",
-    "rxjs": "^7.8.1",
-    "socket.io": "^4.8.3",
-    "speakeasy": "^2.0.0"
-  },
-  "devDependencies": {
-    "@eslint/eslintrc": "^3.2.0",
-    "@eslint/js": "^9.18.0",
-    "@nestjs/cli": "^11.0.0",
-    "@nestjs/schematics": "^11.0.0",
-    "@nestjs/testing": "^11.0.1",
-    "@types/bcrypt": "^6.0.0",
-    "@types/express": "^5.0.0",
-    "@types/jest": "^30.0.0",
-    "@types/multer": "^2.1.0",
-    "@types/node": "^22.10.7",
-    "@types/passport-jwt": "^4.0.1",
-    "@types/passport-local": "^1.0.38",
-    "@types/qrcode": "^1.5.6",
-    "@types/supertest": "^6.0.2",
-    "eslint": "^9.18.0",
-    "eslint-config-prettier": "^10.0.1",
-    "eslint-plugin-prettier": "^5.2.2",
-    "globals": "^16.0.0",
-    "jest": "^30.0.0",
-    "prettier": "^3.4.2",
-    "source-map-support": "^0.5.21",
-    "supertest": "^7.0.0",
-    "ts-jest": "^29.2.5",
-    "ts-loader": "^9.5.2",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.7.3",
-    "typescript-eslint": "^8.20.0"
-  },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
-  }
-}
 
-
-import "dotenv/config";
-import { defineConfig } from "prisma/config";
-
-export default defineConfig({
-  schema: "prisma/schema.prisma",
-  migrations: {
-    path: "prisma/migrations",
-  },
-  datasource: {
-    url: process.env.DATABASE_URL!,
-  },
-});
-
-
-{
-  "compilerOptions": {
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "resolvePackageJsonExports": true,
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "declaration": true,
-    "removeComments": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "allowSyntheticDefaultImports": true,
-    "target": "ES2023",
-    "sourceMap": true,
-    "outDir": "./dist",
-    "baseUrl": "./",
-    "incremental": true,
-    "skipLibCheck": true,
-    "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true,
-    "noImplicitAny": false,
-    "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
-  }
-}
+PAYUNIT_API_KEY=live_lSEcfRfUWdKphMUBUtwkBpetiK3nRJIhA4Iyx44R
+PAYUNIT_USERNAME=aa1cd744-a240-460f-9873-2a6ed41342e5
+PAYUNIT_PASSWORD=9d39526f-6837-4699-ab1a-10c56ad74d68
+PAYUNIT_MODE=live
+PAYUNIT_NOTIFY_URL=https://spotlight-lover-api.onrender.com/api/webhooks/payunit
+PAYUNIT_RETURN_URL=https://spotlight-lover-v1.vercel.app/feed
 
 
 FRONTEND
@@ -14505,7 +14900,7 @@ export default function ProfilePage() {
 
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Trophy, ChevronUp, ChevronDown, X, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { Heart, Trophy, X, Phone, AlertCircle, CheckCircle, Loader, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 
@@ -14542,13 +14937,13 @@ interface VoteState {
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function VideoFeedPage() {
+  // ─── État global ──────────────────────────────────────────────────────────
+
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [voteState, setVoteState] = useState<VoteState | null>(null);
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [contest, setContest] = useState<any>(null);
   const [isLastDay, setIsLastDay] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
@@ -14593,30 +14988,14 @@ export default function VideoFeedPage() {
   }).catch(() => {});
 }, []);
 
-  // ─── Navigation entre vidéos ──────────────────────────────────────────────
+  // ─── Navigation supprimée — utilise scroll snap natif ─────────────────────
 
-  const goNext = useCallback(() => {
-    if (currentIndex < candidates.length - 1) {
-      setCurrentIndex((i) => i + 1);
-    }
-  }, [currentIndex, candidates.length]);
+  // Les boutons haut/bas ne sont plus nécessaires avec le scroll snap natif.
+  // Le scroll se fait automatiquement au doigt sur mobile et à la molette sur desktop.
 
-  const goPrev = useCallback(() => {
-    if (currentIndex > 0) {
-      setCurrentIndex((i) => i - 1);
-    }
-  }, [currentIndex]);
 
   // Navigation clavier
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (voteState) return; // Ne pas naviguer si la modal est ouverte
-      if (e.key === 'ArrowDown') goNext();
-      if (e.key === 'ArrowUp') goPrev();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [goNext, goPrev, voteState]);
+  // Les touches clavier ne sont plus nécessaires avec le scroll natif
 
   // ─── Ouverture modal de vote ──────────────────────────────────────────────
 
@@ -14663,7 +15042,7 @@ export default function VideoFeedPage() {
     try {
       const response = await api.post('/payments/vote', {
         candidateId: voteState.candidateId,
-        phone: voteState.phone,
+        phone: hasEnoughCredits ? undefined : voteState.phone, // ← undefined si wallet couvre (pas envoyé dans JSON)
         operator: voteState.operator,
         quantity: voteState.quantity,
         bonusVotes,
@@ -14795,153 +15174,21 @@ export default function VideoFeedPage() {
     );
   }
 
-  const current = candidates[currentIndex];
-
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden select-none">
-    
-    {/* Banner concours */}
-{contest && contest.status === 'OPEN' && (
-  <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
-    <div className="flex items-center gap-2">
-      <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-      <span className="text-sm font-bold">{contest.title}</span>
-    </div>
-    {contest.prizeAmount && (
-      <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
-    )}
-  </div>
-)}
-{contest && contest.status === 'CLOSED' && (
-  <div className="absolute top-0 left-0 right-0 z-10 bg-red-500/80 backdrop-blur-sm text-white px-4 py-2 text-center">
-    <span className="text-sm font-bold">🔴 Concours terminé — Résultats à venir</span>
-  </div>
-)}
+    // ✅ Scroll snap natif — remplace les boutons haut/bas
+    <div className="w-full h-screen overflow-y-scroll snap-y snap-mandatory bg-black scroll-smooth">
+      {candidates.map((candidate) => (
+        <VideoSlide
+          key={candidate.id}
+          candidate={candidate}
+          voteCounts={voteCounts}
+          contest={contest}
+          isLastDay={isLastDay}
+          onVote={openVoteModal}
+        />
+      ))}
 
-{/* Compte à rebours — visible uniquement dans les 24h */}
-{isLastDay && contest?.endDate && (
-  <CountdownBanner endDate={new Date(contest.endDate)} />
-)}
-    
-      {/* ─── Vidéo principale ──────────────────────────────────────────────── */}
-      <div className="absolute inset-0">
-        {current.videoUrl ? (
-          <video
-            ref={(el) => { videoRefs.current[current.id] = el; }}
-            key={current.id}
-            src={current.videoUrl}
-            className="w-full h-full object-cover"
-            autoPlay
-            loop
-            playsInline
-            muted={false}
-            controls={false}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gray-900">
-            <div className="text-center text-white">
-              <div className="text-6xl mb-4">🎥</div>
-              <p className="text-xl">Vidéo en cours d'upload...</p>
-            </div>
-          </div>
-        )}
-
-        {/* Overlay gradient bas */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
-      </div>
-
-      {/* ─── Infos candidat ────────────────────────────────────────────────── */}
-      <div className="absolute bottom-0 left-0 right-16 p-6 pb-8">
-        {/* Rang */}
-        {current.leaderboardEntry?.rank && (
-          <div className="flex items-center gap-1 mb-2">
-            <Trophy size={14} className="text-yellow-400" />
-            <span className="text-yellow-400 text-sm font-bold">
-              #{current.leaderboardEntry.rank}
-            </span>
-          </div>
-        )}
-
-        {/* Nom de scène */}
-        <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
-          {current.stageName}
-        </h2>
-
-        {/* Bio */}
-        {current.bio && (
-          <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
-            {current.bio}
-          </p>
-        )}
-
-        {/* Compteur de votes */}
-        <div className="flex items-center gap-2 mt-3">
-          <Heart size={16} className="text-red-400 fill-red-400" />
-          <span className="text-white text-sm font-semibold">
-            {(voteCounts[current.id] || 0).toLocaleString('fr-FR')} votes
-          </span>
-        </div>
-      </div>
-
-      {/* ─── Actions droite ────────────────────────────────────────────────── */}
-      <div className="absolute right-4 bottom-0 flex flex-col items-center gap-6 pb-10">
-        {/* Bouton voter */}
-        <button
-          onClick={() => openVoteModal(current)}
-          className="flex flex-col items-center gap-1 group"
-        >
-          <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-            <Heart size={22} className="text-white fill-white" />
-          </div>
-          <span className="text-white text-xs font-semibold drop-shadow">
-            Voter
-          </span>
-          {isLastDay ? (
-            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
-              2 votes !
-            </span>
-          ) : (
-            <span className="text-white text-xs drop-shadow">
-              100 FCFA
-            </span>
-          )}
-        </button>
-
-        {/* Navigation haut/bas */}
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={goPrev}
-            disabled={currentIndex === 0}
-            className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white disabled:opacity-30 hover:bg-black/60 transition"
-          >
-            <ChevronUp size={20} />
-          </button>
-          <button
-            onClick={goNext}
-            disabled={currentIndex === candidates.length - 1}
-            className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white disabled:opacity-30 hover:bg-black/60 transition"
-          >
-            <ChevronDown size={20} />
-          </button>
-        </div>
-      </div>
-
-      {/* ─── Indicateur de position ────────────────────────────────────────── */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex gap-1">
-        {candidates.slice(Math.max(0, currentIndex - 2), currentIndex + 3).map((_, i) => {
-          const idx = Math.max(0, currentIndex - 2) + i;
-          return (
-            <div
-              key={idx}
-              className={`h-1 rounded-full transition-all ${
-                idx === currentIndex ? 'w-6 bg-white' : 'w-1.5 bg-white/40'
-              }`}
-            />
-          );
-        })}
-      </div>
-
-      {/* ─── Modal de vote ─────────────────────────────────────────────────── */}
+      {/* Modal de vote — reste identique */}
       {voteState && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end justify-center z-50">
           <div className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-10 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -15187,6 +15434,182 @@ export default function VideoFeedPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Composant vidéo individuel avec auto-play/pause ─────────────────────────
+
+function VideoSlide({
+  candidate,
+  voteCounts,
+  contest,
+  isLastDay,
+  onVote,
+}: {
+  candidate: Candidate;
+  voteCounts: Record<string, number>;
+  contest: any;
+  isLastDay: boolean;
+  onVote: (candidate: Candidate) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const video = videoRef.current;
+    if (!container || !video) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.8) {
+            video.play().then(() => setIsPlaying(true)).catch(() => {});
+          } else {
+            video.pause();
+            video.currentTime = 0;
+            setIsPlaying(false);
+          }
+        });
+      },
+      { threshold: 0.8 },
+    );
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setIsMuted(video.muted);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full h-screen snap-start overflow-hidden flex-shrink-0"
+    >
+      {/* Vidéo */}
+      {candidate.videoUrl ? (
+        <>
+          <video
+            ref={videoRef}
+            src={candidate.videoUrl}
+            className="w-full h-full object-cover"
+            loop
+            playsInline
+            muted={isMuted}
+            onClick={togglePlay}
+          />
+          {!isPlaying && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center">
+                <div
+                  className="w-0 h-0 border-t-8 border-t-transparent border-b-8 border-b-transparent border-l-16 border-l-white ml-1"
+                  style={{ borderLeft: '20px solid white' }}
+                />
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-gray-900">
+          <div className="text-center text-white">
+            <div className="text-6xl mb-4">🎥</div>
+            <p className="text-xl">Vidéo en cours d'upload...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Overlay gradient */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
+
+      {/* Banner concours */}
+      {contest && contest.status === 'OPEN' && (
+        <div className="absolute top-0 left-0 right-0 z-10 bg-green-500/80 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+            <span className="text-sm font-bold">{contest.title}</span>
+          </div>
+          {contest.prizeAmount && (
+            <span className="text-xs font-semibold">🏆 {contest.prizeAmount.toLocaleString('fr-FR')} FCFA</span>
+          )}
+        </div>
+      )}
+
+      {/* Compte à rebours */}
+      {isLastDay && contest?.endDate && (
+        <CountdownBanner endDate={new Date(contest.endDate)} />
+      )}
+
+      {/* Infos candidat */}
+      <div className="absolute bottom-0 left-0 right-16 p-6 pb-10">
+        {candidate.leaderboardEntry?.rank && (
+          <div className="flex items-center gap-1 mb-2">
+            <Trophy size={14} className="text-yellow-400" />
+            <span className="text-yellow-400 text-sm font-bold">
+              #{candidate.leaderboardEntry.rank}
+            </span>
+          </div>
+        )}
+        <h2 className="text-white text-2xl font-bold mb-1 drop-shadow-lg">
+          {candidate.stageName}
+        </h2>
+        {candidate.bio && (
+          <p className="text-gray-200 text-sm leading-relaxed line-clamp-2 drop-shadow">
+            {candidate.bio}
+          </p>
+        )}
+        <div className="flex items-center gap-2 mt-3">
+          <Heart size={16} className="text-red-400 fill-red-400" />
+          <span className="text-white text-sm font-semibold">
+            {(voteCounts[candidate.id] || 0).toLocaleString('fr-FR')} votes
+          </span>
+        </div>
+      </div>
+
+      {/* Actions droite */}
+      <div className="absolute right-4 bottom-10 flex flex-col items-center gap-5">
+        <button
+          onClick={() => onVote(candidate)}
+          className="flex flex-col items-center gap-1 group"
+        >
+          <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+            <Heart size={22} className="text-white fill-white" />
+          </div>
+          <span className="text-white text-xs font-semibold drop-shadow">Voter</span>
+          {isLastDay ? (
+            <span className="text-yellow-300 text-xs font-bold drop-shadow animate-pulse">
+              2 votes !
+            </span>
+          ) : (
+            <span className="text-white text-xs drop-shadow">100 FCFA</span>
+          )}
+        </button>
+
+        <button
+          onClick={toggleMute}
+          className="w-10 h-10 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white hover:bg-black/60 transition"
+        >
+          {isMuted ? <EyeOff size={18} /> : <Eye size={18} />}
+        </button>
+      </div>
     </div>
   );
 }
@@ -15610,17 +16033,6 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-/// <reference types="vite/client" />
-
-interface ImportMetaEnv {
-  readonly VITE_API_URL: string;
-  readonly VITE_WS_URL: string;
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}
-
 VITE_API_URL=http://localhost:3000/api
 VITE_WS_URL=http://localhost:3000
 
@@ -15640,104 +16052,3 @@ VITE_WS_URL=http://localhost:3000
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
-
-{
-  "name": "spotlightlover-frontend",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build && cp public/_redirects dist/_redirects",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "axios": "^1.7.0",
-    "lucide-react": "^0.400.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-hook-form": "^7.51.0",
-    "react-hot-toast": "^2.4.1",
-    "react-router-dom": "^7.0.0",
-    "recharts": "^3.8.0",
-    "socket.io-client": "^4.7.5"
-  },
-  "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.3",
-    "typescript": "^5.4.0",
-    "vite": "^5.2.0",
-    "vite-plugin-pwa": "^1.2.0"
-  }
-}
-
-
-export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-
-
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
-  theme: {
-    extend: {
-      colors: {
-        brand: {
-          50:  '#f3f0ff',
-          100: '#e9e4ff',
-          500: '#7c3aed',
-          600: '#6d28d9',
-          700: '#5b21b6',
-        },
-      },
-    },
-  },
-  plugins: [],
-};
-
-
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true
-  },
-  "include": ["src"]
-}
-
-
-{
-  "files": [],
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
-  ]
-}
-
-
-{
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
-}
