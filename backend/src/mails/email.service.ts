@@ -1,22 +1,53 @@
-// src/mails/email.service.ts — VERSION COMPLÈTE ET FINALE
-// Remplace intégralement ton fichier existant.
+// src/mails/email.service.ts — VERSION NODEMAILER (Gmail gratuit)
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
-import { Resend } from 'resend';
+import * as nodemailer from 'nodemailer';
+import { Transporter } from 'nodemailer';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private resend: Resend;
+  private transporter: Transporter;
 
   constructor(private configService: ConfigService) {
-    this.resend = new Resend(this.configService.get('RESEND_API_KEY'));
+    this.transporter = nodemailer.createTransport({
+      host: this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
+      port: parseInt(this.configService.get('SMTP_PORT', '587')),
+      secure: false, // false pour port 587 (STARTTLS)
+      auth: {
+        user: this.configService.get('SMTP_USER'),
+        pass: this.configService.get('SMTP_PASS'),
+      },
+    });
+
+    // Vérifier la connexion au démarrage
+    this.transporter.verify((error) => {
+      if (error) {
+        this.logger.error('SMTP connection failed:', error.message);
+      } else {
+        this.logger.log('✅ SMTP Gmail ready');
+      }
+    });
   }
 
-  private async sendMail(options: { to: string; subject: string; html: string; text?: string }) {
-    return this.resend.emails.send({
+  private get from(): string {
+    const user = this.configService.get('SMTP_USER', 'noreply@gmail.com');
+    const from = this.configService.get('SMTP_FROM', user);
+    return `"SpotLightLover 🎬" <${from}>`;
+  }
+
+  private get frontendUrl(): string {
+    return this.configService.get('FRONTEND_URL', 'http://localhost:5173');
+  }
+
+  private async sendMail(options: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+  }) {
+    return this.transporter.sendMail({
       from: this.from,
       to: options.to,
       subject: options.subject,
@@ -25,11 +56,16 @@ export class EmailService {
     });
   }
 
-  // ─── Helper : enveloppe HTML commune ────────────────────────────────────
+  // ─── Helper HTML ─────────────────────────────────────────────────────────
 
-  private wrap(headerColor: string, headerContent: string, bodyContent: string): string {
+  private wrap(
+    headerColor: string,
+    headerContent: string,
+    bodyContent: string,
+  ): string {
     const year = new Date().getFullYear();
-    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:40px 0;">
 <tr><td align="center">
@@ -42,24 +78,19 @@ export class EmailService {
 </table></td></tr></table></body></html>`;
   }
 
-  private get from(): string {
-    return `"SpotLightLover 🎬" <${this.configService.get('SMTP_FROM', 'noreply@spotlightlover.com')}>`;
-  }
-
-  private get frontendUrl(): string {
-    return this.configService.get('FRONTEND_URL', 'http://localhost:5173');
-  }
-
   // ═══════════════════════════════════════════════════════════════════════
-  // MÉTHODES EXISTANTES (conservées à l'identique)
+  // TOUTES LES MÉTHODES — identiques, seul sendMail a changé
   // ═══════════════════════════════════════════════════════════════════════
 
-  async sendVerificationEmail(email: string, token: string, firstName?: string) {
+  async sendVerificationEmail(
+    email: string,
+    token: string,
+    firstName?: string,
+  ) {
     const verifyUrl = `${this.frontendUrl}/verify-email?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
       await this.sendMail({
-     
         to: email,
         subject: '✅ Confirmez votre email — SpotLightLover',
         html: this.wrap(
@@ -69,7 +100,7 @@ export class EmailService {
           `<h2 style="color:#1f2937;font-size:22px;margin:0 0 16px;">Bienvenue, ${name} ! 👋</h2>
            <p style="color:#4b5563;font-size:16px;line-height:1.6;margin:0 0 24px;">
              Merci de vous être inscrit sur SpotLightLover.<br>
-             Cliquez sur le bouton ci-dessous pour confirmer votre adresse email.
+             Cliquez sur le bouton ci-dessous pour confirmer votre email.
            </p>
            <div style="text-align:center;margin:32px 0;">
              <a href="${verifyUrl}" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;padding:16px 40px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block;">✅ Confirmer mon email</a>
@@ -81,27 +112,36 @@ export class EmailService {
            <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
            <p style="color:#9ca3af;font-size:12px;margin:0;">Ou copiez ce lien : <span style="color:#7c3aed;word-break:break-all;">${verifyUrl}</span></p>`,
         ),
-        text: `Bonjour ${name},\n\nCliquez sur ce lien pour vérifier votre email :\n${verifyUrl}\n\nLe lien expire dans 24 heures.`,
+        text: `Bonjour ${name},\n\nCliquez sur ce lien pour vérifier votre email :\n${verifyUrl}\n\nExpire dans 24 heures.`,
       });
       this.logger.log(`Verification email sent to ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send verification email to ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send verification email to ${email}:`,
+        error.message,
+      );
     }
   }
 
-  async sendPasswordResetEmail(email: string, token: string, firstName?: string) {
+  async sendPasswordResetEmail(
+    email: string,
+    token: string,
+    firstName?: string,
+  ) {
     const resetUrl = `${this.frontendUrl}/reset-password?token=${token}`;
     const name = firstName || 'cher utilisateur';
     try {
-     await this.sendMail({
-        
+      await this.sendMail({
         to: email,
         subject: '🔑 Réinitialisation de votre mot de passe — SpotLightLover',
         html: this.wrap(
           'linear-gradient(135deg,#7c3aed,#ec4899)',
           `<h1 style="color:#fff;margin:0;font-size:28px;">🎬 SpotLightLover</h1>`,
           `<h2 style="color:#1f2937;font-size:22px;margin:0 0 16px;">Réinitialisation du mot de passe 🔑</h2>
-           <p style="color:#4b5563;font-size:16px;line-height:1.6;margin:0 0 24px;">Bonjour ${name},<br><br>Vous avez demandé à réinitialiser votre mot de passe.</p>
+           <p style="color:#4b5563;font-size:16px;line-height:1.6;margin:0 0 24px;">
+             Bonjour ${name},<br><br>
+             Vous avez demandé à réinitialiser votre mot de passe.
+           </p>
            <div style="text-align:center;margin:32px 0;">
              <a href="${resetUrl}" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;padding:16px 40px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block;">🔑 Réinitialiser mon mot de passe</a>
            </div>
@@ -111,8 +151,11 @@ export class EmailService {
         text: `Bonjour ${name},\n\nLien de réinitialisation :\n${resetUrl}\n\nExpire dans 1 heure.`,
       });
       this.logger.log(`Password reset email sent to ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send password reset email to ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send password reset email to ${email}:`,
+        error.message,
+      );
       throw error;
     }
   }
@@ -124,37 +167,42 @@ export class EmailService {
     amount: number,
     details: { candidateName?: string; quantity?: number },
   ) {
-    const subject = type === 'VOTE'
-      ? `✅ Vos ${details.quantity} vote(s) sont confirmés — SpotLightLover`
-      : '✅ Votre inscription candidat est confirmée — SpotLightLover';
-    const message = type === 'VOTE'
-      ? `Votre paiement de <strong>${amount} FCFA</strong> a été reçu.<br><strong>${details.quantity} vote(s)</strong> ont été attribués à <strong>${details.candidateName}</strong>.`
-      : `Votre paiement d'inscription de <strong>${amount} FCFA</strong> a été reçu.<br>Votre compte candidat est maintenant <strong>actif</strong>. Vous pouvez uploader votre vidéo !`;
+    const subject =
+      type === 'VOTE'
+        ? `✅ Vos ${details.quantity} vote(s) sont confirmés — SpotLightLover`
+        : '✅ Votre inscription candidat est confirmée — SpotLightLover';
+    const message =
+      type === 'VOTE'
+        ? `Votre paiement de <strong>${amount} FCFA</strong> a été reçu.<br><strong>${details.quantity} vote(s)</strong> ont été attribués à <strong>${details.candidateName}</strong>.`
+        : `Votre paiement d'inscription de <strong>${amount} FCFA</strong> a été reçu.<br>Votre compte candidat est maintenant <strong>actif</strong>. Vous pouvez uploader votre vidéo !`;
     try {
-     await this.sendMail({
-       
+      await this.sendMail({
         to: email,
         subject,
         html: this.wrap(
           'linear-gradient(135deg,#7c3aed,#ec4899)',
           `<h1 style="color:#fff;margin:0;font-size:28px;">🎬 SpotLightLover</h1>`,
           `<h2 style="color:#16a34a;font-size:22px;margin:0 0 16px;">✅ Paiement confirmé !</h2>
-           <p style="color:#4b5563;font-size:16px;line-height:1.8;margin:0 0 24px;">Bonjour <strong>${firstName}</strong>,<br><br>${message}</p>
+           <p style="color:#4b5563;font-size:16px;line-height:1.8;margin:0 0 24px;">
+             Bonjour <strong>${firstName}</strong>,<br><br>${message}
+           </p>
            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;text-align:center;">
              <p style="color:#16a34a;margin:0;font-size:14px;">Merci pour votre soutien à SpotLightLover ! 🎉</p>
            </div>`,
         ),
       });
       this.logger.log(`Payment confirmation email sent to ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send payment confirmation to ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send payment confirmation to ${email}:`,
+        error.message,
+      );
     }
   }
 
   async sendSuspensionEmail(email: string, firstName: string, reason?: string) {
     try {
       await this.sendMail({
-      
         to: email,
         subject: '⚠️ Votre compte a été suspendu — SpotLightLover',
         html: this.wrap(
@@ -169,25 +217,15 @@ export class EmailService {
            <p style="color:#9ca3af;font-size:13px;margin:0;">Pour contester cette décision, contactez notre support.</p>`,
         ),
       });
-    } catch (error) {
-      this.logger.error(`Failed to send suspension email to ${email}:`, error);
+      this.logger.log(`Suspension email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send suspension email to ${email}:`,
+        error.message,
+      );
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // NOUVELLES MÉTHODES — Résultats du concours
-  //
-  // Règle business précisée :
-  //   - Le 1er  → reçoit sendWinnerNotificationEmail()    (avec montant du prix)
-  //   - Le 2ème → reçoit sendTop3NotificationEmail(2)     (position sans prix)
-  //   - Le 3ème → reçoit sendTop3NotificationEmail(3)     (position sans prix)
-  //   - Tous les votants → reçoivent sendContestClosedEmailToVoters()
-  //   - Tous les candidats → reçoivent sendContestClosedEmailToCandidate()
-  // ═══════════════════════════════════════════════════════════════════════
-
-  /**
-   * UNIQUEMENT pour le 1er : il gagne le prix en FCFA.
-   */
   async sendWinnerNotificationEmail(
     email: string,
     firstName: string,
@@ -196,8 +234,7 @@ export class EmailService {
     prizeAmount: number,
   ) {
     try {
-     await this.sendMail({
-       
+      await this.sendMail({
         to: email,
         subject: '🥇 Tu as gagné le concours SpotLightLover !',
         html: this.wrap(
@@ -226,15 +263,14 @@ export class EmailService {
         ),
       });
       this.logger.log(`Winner email sent to ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send winner email to ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send winner email to ${email}:`,
+        error.message,
+      );
     }
   }
 
-  /**
-   * Pour le 2ème et le 3ème : félicitations pour la position, PAS de prix.
-   * Encouragement à revenir au prochain concours.
-   */
   async sendTop3NotificationEmail(
     email: string,
     firstName: string,
@@ -248,7 +284,6 @@ export class EmailService {
     const label = labels[position];
     try {
       await this.sendMail({
-      
         to: email,
         subject: `${medal} Tu termines ${label} du concours SpotLightLover !`,
         html: this.wrap(
@@ -272,14 +307,14 @@ export class EmailService {
         ),
       });
       this.logger.log(`Top3 email sent to ${email} (position ${position})`);
-    } catch (error) {
-      this.logger.error(`Failed to send top3 email to ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send top3 email to ${email}:`,
+        error.message,
+      );
     }
   }
 
-  /**
-   * Pour tous les votants : résumé du concours avec top 3.
-   */
   async sendContestClosedEmailToVoters(
     email: string,
     firstName: string,
@@ -288,16 +323,19 @@ export class EmailService {
     top3: { rank: number; stageName: string; votes: number }[],
   ) {
     const medals = ['🥇', '🥈', '🥉'];
-    const rows = top3.map((c, i) =>
-      `<tr><td style="padding:12px;text-align:center;font-size:20px;">${medals[i]}</td>
-       <td style="padding:12px;color:#1f2937;font-weight:600;">${c.stageName}</td>
-       <td style="padding:12px;text-align:right;color:#7c3aed;font-weight:bold;">${c.votes.toLocaleString('fr-FR')} votes</td></tr>`
-    ).join('');
+    const rows = top3
+      .map(
+        (c, i) =>
+          `<tr><td style="padding:12px;text-align:center;font-size:20px;">${medals[i]}</td>
+           <td style="padding:12px;color:#1f2937;font-weight:600;">${c.stageName}</td>
+           <td style="padding:12px;text-align:right;color:#7c3aed;font-weight:bold;">${c.votes.toLocaleString('fr-FR')} votes</td></tr>`,
+      )
+      .join('');
     try {
       await this.sendMail({
-       
         to: email,
-        subject: '🏆 Le concours SpotLightLover est terminé — Voici les résultats !',
+        subject:
+          '🏆 Le concours SpotLightLover est terminé — Voici les résultats !',
         html: this.wrap(
           'linear-gradient(135deg,#7c3aed,#ec4899)',
           `<h1 style="color:#fff;margin:0;font-size:28px;">🏆 SpotLightLover</h1>
@@ -323,15 +361,14 @@ export class EmailService {
         ),
       });
       this.logger.log(`Contest closed email sent to voter ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send contest closed email to voter ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send contest closed email to voter ${email}:`,
+        error.message,
+      );
     }
   }
 
-  /**
-   * Pour les candidats actifs lors de la clôture automatique (scheduler).
-   * Chaque candidat reçoit son propre classement.
-   */
   async sendContestClosedEmailToCandidate(
     email: string,
     firstName: string,
@@ -344,7 +381,6 @@ export class EmailService {
       : 'Le classement final sera publié prochainement.';
     try {
       await this.sendMail({
-       
         to: email,
         subject: '🎬 Le concours SpotLightLover est terminé — Ton classement',
         html: this.wrap(
@@ -366,8 +402,11 @@ export class EmailService {
         ),
       });
       this.logger.log(`Contest closed email sent to candidate ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send contest closed email to candidate ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send contest closed email to candidate ${email}:`,
+        error.message,
+      );
     }
   }
 }
