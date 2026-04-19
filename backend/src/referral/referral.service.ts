@@ -23,8 +23,10 @@ export class ReferralService {
     return code;
   }
 
-  // Appelé lors de l'inscription avec un code parrain
-  async processReferral(newUserId: string, referralCode: string): Promise<void> {
+  async processReferral(
+    newUserId: string,
+    referralCode: string,
+  ): Promise<void> {
     try {
       const referrer = await this.prisma.user.findUnique({
         where: { referralCode },
@@ -37,6 +39,36 @@ export class ReferralService {
         where: { referredId: newUserId },
       });
       if (existing) return;
+
+      // ✅ NOUVEAU — bloquer le parrainage circulaire
+      // (A parraine B, puis B essaie de parrainer A)
+      const circular = await this.prisma.referral.findFirst({
+        where: {
+          referrerId: newUserId,
+          referredId: referrer.id,
+        },
+      });
+      if (circular) {
+        this.logger.warn(
+          `Parrainage circulaire bloqué: ${newUserId} ↔ ${referrer.id}`,
+        );
+        return;
+      }
+
+      // ✅ NOUVEAU — vérifier que le nouvel utilisateur
+      // n'est pas déjà connu dans la DB sous un autre compte
+      // (même email = impossible car ConflictException à l'inscription)
+      // Mais on vérifie qu'il n'a pas déjà parrainé quelqu'un lui-même
+      // ce qui indiquerait qu'il est un ancien utilisateur
+      const isOldUser = await this.prisma.referral.findFirst({
+        where: { referrerId: newUserId },
+      });
+      if (isOldUser) {
+        this.logger.warn(
+          `Ancien utilisateur détecté, parrainage ignoré: ${newUserId}`,
+        );
+        return;
+      }
 
       // Créer le parrainage
       const referral = await this.prisma.referral.create({
@@ -82,9 +114,10 @@ export class ReferralService {
           walletId: wallet.id,
           type,
           amount,
-          description: type === 'REFERRAL_BONUS'
-            ? `+${amount} FCFA — Bonus parrainage`
-            : `${amount} FCFA — Vote`,
+          description:
+            type === 'REFERRAL_BONUS'
+              ? `+${amount} FCFA — Bonus parrainage`
+              : `${amount} FCFA — Vote`,
           referenceId,
         },
       }),
@@ -92,7 +125,11 @@ export class ReferralService {
   }
 
   // Débite le wallet (pour voter avec les crédits)
-  async debitWallet(userId: string, amount: number, referenceId?: string): Promise<boolean> {
+  async debitWallet(
+    userId: string,
+    amount: number,
+    referenceId?: string,
+  ): Promise<boolean> {
     const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
     if (!wallet || wallet.balance < amount) return false;
 
@@ -117,13 +154,16 @@ export class ReferralService {
   // Stats de parrainage pour un user
   async getReferralStats(userId: string) {
     const code = await this.getOrCreateReferralCode(userId);
-    const frontendUrl = process.env.FRONTEND_URL || 'https://spotlight-lover-v1.vercel.app';
+    const frontendUrl =
+      process.env.FRONTEND_URL || 'https://spotlight-lover-v1.vercel.app';
 
     const [referrals, wallet] = await Promise.all([
       this.prisma.referral.findMany({
         where: { referrerId: userId },
         include: {
-          referred: { select: { firstName: true, lastName: true, createdAt: true } },
+          referred: {
+            select: { firstName: true, lastName: true, createdAt: true },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -136,8 +176,10 @@ export class ReferralService {
       totalReferrals: referrals.length,
       totalEarned: referrals.length * 50,
       walletBalance: wallet?.balance || 0,
-      referrals: referrals.map(r => ({
-        name: `${r.referred.firstName || ''} ${r.referred.lastName || ''}`.trim() || 'Anonyme',
+      referrals: referrals.map((r) => ({
+        name:
+          `${r.referred.firstName || ''} ${r.referred.lastName || ''}`.trim() ||
+          'Anonyme',
         date: r.createdAt,
         bonus: r.bonusAmount,
       })),
