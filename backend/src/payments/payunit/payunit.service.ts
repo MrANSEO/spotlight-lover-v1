@@ -58,13 +58,19 @@ export class PayunitService {
     phone: string;
     message?: string;
   }): Promise<PayunitPaymentResponse> {
-    const phone = this.normalizePhoneNumber(params.phone);
-    const gateway = this.detectGateway(phone);
+    const normalizedPhone = this.normalizePhoneNumber(params.phone);
+    const gateway = this.detectGateway(normalizedPhone);
+
+    // ✅ CORRECTION — PayUnit veut le numéro SANS le 237 (ex: 675286243)
+    const phoneForPayunit = normalizedPhone.startsWith('237')
+      ? normalizedPhone.substring(3)
+      : normalizedPhone;
+
     const transactionId = `SLL_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const headers = this.getHeaders();
 
     this.logger.log(
-      `PayUnit payment: ${params.amount} XAF → ${phone} via ${gateway}`,
+      `PayUnit payment: ${params.amount} XAF → ${normalizedPhone} via ${gateway} (phone envoyé: ${phoneForPayunit})`,
     );
 
     try {
@@ -86,7 +92,7 @@ export class PayunitService {
           gateway,
           amount: params.amount,
           transaction_id: transactionId,
-          phone_number: phone,
+          phone_number: phoneForPayunit, // ✅ sans le 237
           currency: 'XAF',
           paymentType: 'button',
           notify_url: this.config.get('PAYUNIT_NOTIFY_URL'),
@@ -98,11 +104,12 @@ export class PayunitService {
       const data = response.data;
       this.logger.log(`PayUnit response: ${JSON.stringify(data)}`);
 
-      // ✅ CORRECTION — payment_status est le vrai indicateur du paiement
       const paymentStatus = data?.data?.payment_status;
-      const success = paymentStatus === 'SUCCESSFUL'; // PayUnit confirme avec "SUCCESSFUL"
+      const success = paymentStatus === 'SUCCESSFUL';
 
-      this.logger.log(`PayUnit payment_status: ${paymentStatus}, success: ${success}`);
+      this.logger.log(
+        `PayUnit payment_status: ${paymentStatus}, success: ${success}`,
+      );
 
       return {
         success,
@@ -115,7 +122,9 @@ export class PayunitService {
       this.logger.error(`PayUnit erreur: ${msg}`);
 
       if (msg?.includes('insufficient')) {
-        throw new BadRequestException('Solde insuffisant sur votre Mobile Money.');
+        throw new BadRequestException(
+          'Solde insuffisant sur votre Mobile Money.',
+        );
       }
 
       throw new InternalServerErrorException(
